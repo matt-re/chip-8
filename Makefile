@@ -19,7 +19,7 @@ OBJS	:= chip8.o
 
 all: $(TARGET)
 
-%.o: %.c data.h
+%.o: %.c
 	$(CC) -c $(CFLAGS) $<
 
 $(TARGET): $(OBJS)
