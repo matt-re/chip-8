@@ -42,6 +42,10 @@
 #define VIDEO_HEIGHT	32
 #define VIDEO_WIDTH	64
 
+#define OPCODE_STR_MAX	18
+
+#define MAX_PROGRAMS 10
+
 #define CHIP8_DEBUG_MSG(PROG,...)				\
 do {								\
 	char *e = (char *)&(PROG)->mem[ERROR_ADDRESS];		\
@@ -52,7 +56,10 @@ do {								\
 			"expected %d, actual %d",		\
 			 __LINE__, ERROR_SIZE-1, n);		\
 	}							\
-	*(uint8_t *)e = (uint8_t)n;				\
+	if (n < 0 || n >= ERROR_SIZE) {				\
+		*(uint8_t *)e = 0;				\
+		*(uint8_t *)(e+1) = 0;				\
+	}							\
 } while(0);
 
 #define BYTE_TO_BINARY(byte)		\
@@ -81,8 +88,6 @@ do {										\
 	}									\
 } while(0)
 
-#define OPCODE_STR_MAX	18
-
 static uint8_t DemoRandomTimer[] =
 {
 	0x00, 0xE0, 0xC0, 0x0F, 0xF0, 0x29, 0x61, 0x1C,
@@ -98,8 +103,6 @@ static uint8_t *Demos[] = {
 static size_t DemosSize[] = {
 	sizeof DemoRandomTimer
 };
-
-#define MAX_DEMOS (sizeof Demos / sizeof Demos[0])
 
 enum chip8_flags
 {
@@ -155,7 +158,7 @@ static uint8_t Fonts[FONT_SIZE] = {
 static volatile sig_atomic_t Quit = 0;
 static volatile sig_atomic_t Stop = 0;
 static volatile sig_atomic_t Dump = 0;
-static struct chip8_program Programs[MAX_DEMOS];
+static struct chip8_program Programs[MAX_PROGRAMS];
 
 static void
 os_write(int fd, char *s, size_t n)
@@ -912,7 +915,7 @@ static size_t
 load_builtin()
 {
 	size_t i;
-	for (i = 0; i < MAX_DEMOS; i++) {
+	for (i = 0; i < (sizeof Demos / sizeof Demos[0]); i++) {
 		if (!chip8_init(&Programs[i], Demos[i], DemosSize[i])) {
 			fprintf(stderr, "error: cannot load program %zu\n", i);
 			break;
@@ -930,8 +933,16 @@ main(int argc, char **argv)
 	srand((unsigned int)time(NULL));
 
 	size_t num_progs = 0;
-	if (argc > 1) {
-		num_progs = load_file(argv+1, MIN((size_t)argc-1,MAX_DEMOS));
+	--argc;
+	++argv;
+	if (argc) {
+		if (strcmp(argv[argc-1], "-disasm") == 0) {
+			disasm_and_quit = true;
+			--argc;
+		}
+	}
+	if (argc) {
+		num_progs = load_file(argv, MIN((size_t)argc,MAX_PROGRAMS));
 	} else {
 		num_progs = load_builtin();
 	}
