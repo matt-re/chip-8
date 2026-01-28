@@ -957,6 +957,10 @@ main(int argc, char **argv)
 		return 0;
 	}
 
+	if (!num_progs) {
+		return 1;
+	}
+
 	struct termios old_state;
 	os_init(&old_state);
 
