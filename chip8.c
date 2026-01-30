@@ -108,13 +108,14 @@ static size_t DemosSize[] = {
 
 enum chip8_flags
 {
-	CHIP8_FLAG_NONE        = 0x00,
-	CHIP8_FLAG_QUIRKS_8XY6 = 0x01,
-	CHIP8_FLAG_QUIRKS_BNNN = 0x02,
-	CHIP8_FLAG_QUIRKS_DXYN = 0x04,
-	CHIP8_FLAG_QUIRKS_FX55 = 0x08,
-	CHIP8_FLAG_QUIRKS_FLAG = 0x10,
-	CHIP8_FLAG_DEBUG       = 0x20
+	CHIP8_FLAG_NONE         = 0x00,
+	CHIP8_FLAG_QUIRKS_8XY6  = 0x01,
+	CHIP8_FLAG_QUIRKS_BNNN  = 0x02,
+	CHIP8_FLAG_QUIRKS_DXYN  = 0x04,
+	CHIP8_FLAG_QUIRKS_FX55  = 0x08,
+	CHIP8_FLAG_QUIRKS_FLAG  = 0x10,
+	CHIP8_FLAG_DISPLAY_WAIT = 0x20,
+	CHIP8_FLAG_DEBUG        = 0x40
 };
 
 struct chip8_program
@@ -561,6 +562,7 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 		}
 
 		int64_t time_now = os_get_time();
+		bool display_wait = false;
 		for (int i = 0; i < ops_per_frame; i++) {
 			if (*pc < PROG_START || *pc >= PROG_END) {
 				CHIP8_DEBUG_MSG(program, "error: pc overflow (0x%03hX)\n", *pc);
@@ -576,6 +578,9 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 				case 0xE0:
 					memset(video, 0, VIDEO_BYTES);
 					*pc += 2;
+					if (flags & CHIP8_FLAG_DISPLAY_WAIT) {
+						display_wait = true;
+					}
 					break;
 				case 0xEE:
 					if ((*sp-1) >= STACK_COUNT) {
@@ -735,6 +740,9 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 					}
 				}
 				*pc += 2;
+				if (flags & CHIP8_FLAG_DISPLAY_WAIT) {
+					display_wait = true;
+				}
 				break;
 			case 0xE000:
 				switch (opcode.value & 0xFF) {
@@ -817,9 +825,11 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 				}
 				break;
 			}
-		}
 
-		os_draw(video);
+			if (display_wait) {
+				break;
+			}
+		}
 
 		if (*delay) {
 			--*delay;
@@ -830,12 +840,14 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 			--*sound;
 		}
 
+		os_wait_frame(time_now);
+
+		os_draw(video);
+
 		update_keypad(&keypad, time_now, keypad_delay);
 		if (!Stop && (flags & CHIP8_FLAG_DEBUG)) {
 			CHIP8_DEBUG_KEY_STATE(program, keypad);
 		}
-
-		os_wait_frame(time_now);
 	}
 }
 
@@ -978,7 +990,7 @@ main(int argc, char **argv)
 	os_init(&old_state);
 
 	for (size_t i = 0; i < num_progs; i++) {
-		chip8_exec(&Programs[i], 10, 30, CHIP8_FLAG_QUIRKS_8XY6|CHIP8_FLAG_QUIRKS_FX55|CHIP8_FLAG_QUIRKS_FLAG);
+		chip8_exec(&Programs[i], 10, 30, CHIP8_FLAG_NONE);
 		chip8_error(&Programs[i]);
 		if (Quit) {
 			break;
