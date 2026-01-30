@@ -113,7 +113,8 @@ enum chip8_flags
 	CHIP8_FLAG_QUIRKS_BNNN = 0x02,
 	CHIP8_FLAG_QUIRKS_DXYN = 0x04,
 	CHIP8_FLAG_QUIRKS_FX55 = 0x08,
-	CHIP8_FLAG_DEBUG       = 0x10
+	CHIP8_FLAG_QUIRKS_FLAG = 0x10,
+	CHIP8_FLAG_DEBUG       = 0x20
 };
 
 struct chip8_program
@@ -629,14 +630,23 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 					break;
 				case 0x1:
 					v[opcode.vx] |= v[opcode.vy];
+					if (flags & CHIP8_FLAG_QUIRKS_FLAG) {
+						v[FLAG_REG] = 0;
+					}
 					*pc += 2;
 					break;
 				case 0x2:
 					v[opcode.vx] &= v[opcode.vy];
+					if (flags & CHIP8_FLAG_QUIRKS_FLAG) {
+						v[FLAG_REG] = 0;
+					}
 					*pc += 2;
 					break;
 				case 0x3:
 					v[opcode.vx] ^= v[opcode.vy];
+					if (flags & CHIP8_FLAG_QUIRKS_FLAG) {
+						v[FLAG_REG] = 0;
+					}
 					*pc += 2;
 					break;
 				case 0x4:
@@ -968,7 +978,7 @@ main(int argc, char **argv)
 	os_init(&old_state);
 
 	for (size_t i = 0; i < num_progs; i++) {
-		chip8_exec(&Programs[i], 10, 30, CHIP8_FLAG_NONE);
+		chip8_exec(&Programs[i], 10, 30, CHIP8_FLAG_QUIRKS_8XY6|CHIP8_FLAG_QUIRKS_FX55|CHIP8_FLAG_QUIRKS_FLAG);
 		chip8_error(&Programs[i]);
 		if (Quit) {
 			break;
