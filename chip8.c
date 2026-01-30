@@ -46,6 +46,8 @@
 
 #define MAX_PROGRAMS 10
 
+#define DOUBLE_WIDTH_OUTPUTx
+
 #define CHIP8_DEBUG_MSG(PROG,...)				\
 do {								\
 	char *e = (char *)&(PROG)->mem[ERROR_ADDRESS];		\
@@ -199,8 +201,13 @@ os_beep()
 
 static const char AnsiEscHome[] = { '\033', '[', 'H' };
 static const char EndOfLine[] = { '\r', '\n' };
+#ifdef DOUBLE_WIDTH_OUTPUT
 static const char PixelOn[]  = { '\033', '[', '9', '2', 'm', 0xE2, 0x96, 0x88, 0xE2, 0x96, 0x88, '\033', '[', '0', 'm' };
 static const char PixelOff[] = { '\033', '[', '3', '2', 'm', 0xE2, 0x96, 0x91, 0xE2, 0x96, 0x91, '\033', '[', '0', 'm' };
+#else
+static const char PixelOn[]  = { '\033', '[', '9', '2', 'm', 0xE2, 0x96, 0x88, '\033', '[', '0', 'm' };
+static const char PixelOff[] = { '\033', '[', '3', '2', 'm', 0xE2, 0x96, 0x91, '\033', '[', '0', 'm' };
+#endif
 static char DrawBuffer[(sizeof AnsiEscHome) + (VIDEO_HEIGHT * VIDEO_WIDTH * (sizeof PixelOn)) + ((sizeof EndOfLine) * VIDEO_HEIGHT)];
 
 static void
