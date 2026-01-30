@@ -647,11 +647,9 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 					*pc += 2;
 					break;
 				case 0x6:
-					if (flags & CHIP8_FLAG_QUIRKS_8XY6) {
-						v[opcode.vx] = v[opcode.vy];
-					}
-					v[FLAG_REG] = v[opcode.vx] & 1;
-					v[opcode.vx] >>= 1;
+					*acc = (flags & CHIP8_FLAG_QUIRKS_8XY6) ? v[opcode.vy] : v[opcode.vx];
+					v[opcode.vx] = (*acc >> 1) & 0xFF;
+					v[FLAG_REG]  = *acc & 1;
 					*pc += 2;
 					break;
 				case 0x7:
@@ -662,11 +660,9 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 					*pc += 2;
 					break;
 				case 0xE:
-					if (flags & CHIP8_FLAG_QUIRKS_8XY6) {
-						v[opcode.vx] = v[opcode.vy];
-					}
-					v[FLAG_REG] = (v[opcode.vx] & 0x80) >> 7;
-					v[opcode.vx] <<= 1;
+					*acc = (flags & CHIP8_FLAG_QUIRKS_8XY6) ? v[opcode.vy] : v[opcode.vx];
+					v[opcode.vx] = (*acc << 1) & 0xFF;
+					v[FLAG_REG]  = (*acc & 0x80) >> 7;
 					*pc += 2;
 					break;
 				}
