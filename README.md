@@ -12,5 +12,5 @@ A CHIP-8 emulator in C.
 ## Examples
 Space Invaders, from the CHIP-8 games pack, running in the terminal
 <img alt="Screenshot of Space Invaders showing first 4 invaders on game start" src="INVADERS1.png" width="600"/>
-<img alt="Screenshot of Space Invaders showing 3 invaders with missle fired" src="INVADERS2.png" width="600"/>
+<img alt="Screenshot of Space Invaders showing 3 invaders with missile fired" src="INVADERS2.png" width="600"/>
 <img alt="Screenshot of Space Invaders game over screen" src="INVADERS3.png" width="600"/>
