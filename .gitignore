@@ -1,7 +1,11 @@
 *
 
 !chip8.c
+!chip8.m
 !Makefile
 !LICENSE
 !README.md
+!INVADERS1.png
+!INVADERS2.png
+!INVADERS3.png
 
