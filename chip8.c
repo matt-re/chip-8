@@ -42,6 +42,8 @@
 #define VIDEO_HEIGHT	32
 #define VIDEO_WIDTH	64
 
+#define CHIP8_ORIGINAL_QUIRKS (CHIP8_QUIRK_INCREMENT_I | CHIP8_QUIRK_RESET_VF | CHIP8_QUIRK_VBLANK_WAIT)
+
 #define OPCODE_STR_MAX	18
 
 #define MAX_PROGRAMS 10
@@ -106,16 +108,15 @@ static size_t DemosSize[] = {
 	sizeof DemoRandomTimer
 };
 
-enum chip8_flags
+enum chip8_quirks
 {
-	CHIP8_FLAG_NONE         = 0x00,
-	CHIP8_FLAG_QUIRKS_8XY6  = 0x01,
-	CHIP8_FLAG_QUIRKS_BNNN  = 0x02,
-	CHIP8_FLAG_QUIRKS_DXYN  = 0x04,
-	CHIP8_FLAG_QUIRKS_FX55  = 0x08,
-	CHIP8_FLAG_QUIRKS_FLAG  = 0x10,
-	CHIP8_FLAG_DISPLAY_WAIT = 0x20,
-	CHIP8_FLAG_DEBUG        = 0x40
+	CHIP8_QUIRK_NONE        = 0x00,
+	CHIP8_QUIRK_SHIFT_VX    = 0x01, /* 8XY6 and 8XYE use VX for the source of the shift instead of VY */
+	CHIP8_QUIRK_JUMP_FROM_X = 0x02, /* BNNN uses VX for jump offset intead of V0 */
+	CHIP8_QUIRK_NO_CLIPPING = 0x04, /* DXYN wraps sprite instead of clipping at edges */
+	CHIP8_QUIRK_INCREMENT_I = 0x08, /* FX55 and FX65 increments the I address */
+	CHIP8_QUIRK_RESET_VF    = 0x10, /* 8XY1, 8XY2 and 8XY3 set VF to zero */
+	CHIP8_QUIRK_VBLANK_WAIT = 0x20, /* DXYN a single sprite is drawn per VBLANK */
 };
 
 struct chip8_program
@@ -536,7 +537,7 @@ chip8_error(struct chip8_program *program)
 }
 
 static void
-chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, enum chip8_flags flags)
+chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, enum chip8_quirks quirks)
 {
 	uint8_t  *mem   = program->mem;
 	uint16_t *addr  = (uint16_t *)&mem[I_ADDRESS];
@@ -562,7 +563,8 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 		}
 
 		int64_t time_now = os_get_time();
-		bool display_wait = false;
+		bool vblank_wait = false;
+
 		for (int i = 0; i < ops_per_frame; i++) {
 			if (*pc < PROG_START || *pc >= PROG_END) {
 				CHIP8_DEBUG_MSG(program, "error: pc overflow (0x%03hX)\n", *pc);
@@ -578,9 +580,6 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 				case 0xE0:
 					memset(video, 0, VIDEO_BYTES);
 					*pc += 2;
-					if (flags & CHIP8_FLAG_DISPLAY_WAIT) {
-						display_wait = true;
-					}
 					break;
 				case 0xEE:
 					if ((*sp-1) >= STACK_COUNT) {
@@ -635,21 +634,21 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 					break;
 				case 0x1:
 					v[opcode.vx] |= v[opcode.vy];
-					if (flags & CHIP8_FLAG_QUIRKS_FLAG) {
+					if (quirks & CHIP8_QUIRK_RESET_VF) {
 						v[FLAG_REG] = 0;
 					}
 					*pc += 2;
 					break;
 				case 0x2:
 					v[opcode.vx] &= v[opcode.vy];
-					if (flags & CHIP8_FLAG_QUIRKS_FLAG) {
+					if (quirks & CHIP8_QUIRK_RESET_VF) {
 						v[FLAG_REG] = 0;
 					}
 					*pc += 2;
 					break;
 				case 0x3:
 					v[opcode.vx] ^= v[opcode.vy];
-					if (flags & CHIP8_FLAG_QUIRKS_FLAG) {
+					if (quirks & CHIP8_QUIRK_RESET_VF) {
 						v[FLAG_REG] = 0;
 					}
 					*pc += 2;
@@ -669,7 +668,7 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 					*pc += 2;
 					break;
 				case 0x6:
-					*acc = (flags & CHIP8_FLAG_QUIRKS_8XY6) ? v[opcode.vy] : v[opcode.vx];
+					*acc = (quirks & CHIP8_QUIRK_SHIFT_VX) ? v[opcode.vx] : v[opcode.vy];
 					v[opcode.vx] = (*acc >> 1) & 0xFF;
 					v[FLAG_REG]  = *acc & 1;
 					*pc += 2;
@@ -682,7 +681,7 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 					*pc += 2;
 					break;
 				case 0xE:
-					*acc = (flags & CHIP8_FLAG_QUIRKS_8XY6) ? v[opcode.vy] : v[opcode.vx];
+					*acc = (quirks & CHIP8_QUIRK_SHIFT_VX) ? v[opcode.vx] : v[opcode.vy];
 					v[opcode.vx] = (*acc << 1) & 0xFF;
 					v[FLAG_REG]  = (*acc & 0x80) >> 7;
 					*pc += 2;
@@ -697,7 +696,7 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 				*pc += 2;
 				break;
 			case 0xB000:
-				if (flags & CHIP8_FLAG_QUIRKS_BNNN) {
+				if (quirks & CHIP8_QUIRK_JUMP_FROM_X) {
 					*pc = opcode.nnn + v[opcode.vx];
 				} else {
 					*pc = opcode.nnn + v[0];
@@ -713,12 +712,10 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 				v[FLAG_REG] = 0;
 				for (uint8_t y = 0; y < opcode.n; y++) {
 					uint8_t yc = y0 + y;
-					if (flags & CHIP8_FLAG_QUIRKS_DXYN) {
+					if (quirks & CHIP8_QUIRK_NO_CLIPPING) {
 						yc %= VIDEO_HEIGHT;
-					} else {
-						if (yc >= VIDEO_HEIGHT) {
-							break;
-						}
+					} else if (yc >= VIDEO_HEIGHT) {
+						break;
 					}
 					uint8_t sprite = mem[(*addr + y) & 0xFFF];
 					for (uint8_t sprite_mask = 1 << 7, x = 0; sprite_mask != 0; sprite_mask >>= 1, x++) {
@@ -726,12 +723,10 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 							continue;
 						}
 						uint8_t xc = x0 + x;
-						if (flags & CHIP8_FLAG_QUIRKS_DXYN) {
+						if (quirks & CHIP8_QUIRK_NO_CLIPPING) {
 							xc %= VIDEO_WIDTH;
-						} else {
-							if (xc >= VIDEO_WIDTH) {
-								break;
-							}
+						} else if (xc >= VIDEO_WIDTH) {
+							break;
 						}
 						uint16_t byte = (yc * VIDEO_WIDTH + xc) / 8;
 						uint8_t mask = (1 << (7 - xc % 8)) & 0xFF;
@@ -740,8 +735,8 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 					}
 				}
 				*pc += 2;
-				if (flags & CHIP8_FLAG_DISPLAY_WAIT) {
-					display_wait = true;
+				if (quirks & CHIP8_QUIRK_VBLANK_WAIT) {
+					vblank_wait = true;
 				}
 				break;
 			case 0xE000:
@@ -797,7 +792,7 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 					for (uint8_t x = 0; x <= opcode.vx; x++) {
 						mem[(*addr + x) & 0xFFF] = v[x];
 					}
-					if (flags & CHIP8_FLAG_QUIRKS_FX55) {
+					if (quirks & CHIP8_QUIRK_INCREMENT_I) {
 						*addr = (*addr + opcode.vx + 1) & 0xFFF;
 					}
 					*pc += 2;
@@ -806,7 +801,7 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 					for (uint8_t x = 0; x <= opcode.vx; x++) {
 						v[x] = mem[(*addr + x) & 0xFFF];
 					}
-					if (flags & CHIP8_FLAG_QUIRKS_FX55) {
+					if (quirks & CHIP8_QUIRK_INCREMENT_I) {
 						*addr = (*addr + opcode.vx + 1) & 0xFFF;
 					}
 					*pc += 2;
@@ -826,7 +821,7 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 				break;
 			}
 
-			if (display_wait) {
+			if (vblank_wait) {
 				break;
 			}
 		}
@@ -845,7 +840,7 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 		os_draw(video);
 
 		update_keypad(&keypad, time_now, keypad_delay);
-		if (!Stop && (flags & CHIP8_FLAG_DEBUG)) {
+		if (!Stop) {
 			CHIP8_DEBUG_KEY_STATE(program, keypad);
 		}
 	}
@@ -990,7 +985,7 @@ main(int argc, char **argv)
 	os_init(&old_state);
 
 	for (size_t i = 0; i < num_progs; i++) {
-		chip8_exec(&Programs[i], 10, 30, CHIP8_FLAG_NONE);
+		chip8_exec(&Programs[i], 10, 30, CHIP8_QUIRK_NONE);
 		chip8_error(&Programs[i]);
 		if (Quit) {
 			break;
