@@ -712,10 +712,12 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 				v[FLAG_REG] = 0;
 				for (uint8_t y = 0; y < opcode.n; y++) {
 					uint8_t yc = y0 + y;
-					if (quirks & CHIP8_QUIRK_NO_CLIPPING) {
-						yc %= VIDEO_HEIGHT;
-					} else if (yc >= VIDEO_HEIGHT) {
-						break;
+					if (yc >= VIDEO_HEIGHT) {
+						if (quirks & CHIP8_QUIRK_NO_CLIPPING) {
+							yc %= VIDEO_HEIGHT;
+						} else {
+							break;
+						}
 					}
 					uint8_t sprite = mem[(*addr + y) & 0xFFF];
 					for (uint8_t sprite_mask = 1 << 7, x = 0; sprite_mask != 0; sprite_mask >>= 1, x++) {
@@ -723,10 +725,12 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 							continue;
 						}
 						uint8_t xc = x0 + x;
-						if (quirks & CHIP8_QUIRK_NO_CLIPPING) {
-							xc %= VIDEO_WIDTH;
-						} else if (xc >= VIDEO_WIDTH) {
-							break;
+						if (xc >= VIDEO_WIDTH) {
+							if (quirks & CHIP8_QUIRK_NO_CLIPPING) {
+								xc %= VIDEO_WIDTH;
+							} else {
+								break;
+							}
 						}
 						uint16_t byte = (yc * VIDEO_WIDTH + xc) / 8;
 						uint8_t mask = (1 << (7 - xc % 8)) & 0xFF;
@@ -985,7 +989,7 @@ main(int argc, char **argv)
 	os_init(&old_state);
 
 	for (size_t i = 0; i < num_progs; i++) {
-		chip8_exec(&Programs[i], 10, 30, CHIP8_QUIRK_NONE);
+		chip8_exec(&Programs[i], 10, 30, CHIP8_QUIRK_SHIFT_VX);
 		chip8_error(&Programs[i]);
 		if (Quit) {
 			break;
