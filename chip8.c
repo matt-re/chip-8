@@ -14,6 +14,7 @@
 #define MIN(A,B) ((A)<(B)?(A):(B))
 #endif
 
+/* Memory map for 4K COSMAC VIP */
 #define PC_ADDRESS	0x000
 #define PCPREV_ADDRESS	0x002
 #define I_ADDRESS	0x004
@@ -35,8 +36,8 @@
 #define FLAG_REG	15
 #define FONT_SIZE	80
 #define FONT_WIDTH	5
-#define PROG_START	PROG_ADDRESS
-#define PROG_MAX	(PROG_END - PROG_START + 1)
+#define PC_START	0x1FC
+#define PROG_MAX	(PROG_END - PROG_ADDRESS + 1)
 #define STACK_COUNT	12
 #define VIDEO_BYTES	256
 #define VIDEO_HEIGHT	32
@@ -458,7 +459,7 @@ chip8_dump(FILE *dst, struct chip8_program *program, bool full)
 		fprintf(dst, "\n");
 		fprintf(dst, "Display   0x%03X\n", VIDEO_ADDRESS);
 		struct chip8_opcode opcode;
-		if (*pc >= PROG_START && *pc < PROG_END) {
+		if (*pc >= PC_START && *pc < PROG_END) {
 			opcode = opcode_from_bytes(mem[*pc], mem[*(pc)+1]);
 			fprintf(dst, "Opcode    0x%03X  0x%04X VX:0x%02X VY:0x%02X N:0x%X NN:0x%02X NNN:0x%03X\n",
 				*pc, opcode.value, opcode.vx, opcode.vy, opcode.n, opcode.nn, opcode.nnn);
@@ -566,7 +567,7 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 		bool vblank_wait = false;
 
 		for (int i = 0; i < ops_per_frame; i++) {
-			if (*pc < PROG_START || *pc >= PROG_END) {
+			if (*pc < PC_START || *pc >= PROG_END) {
 				CHIP8_DEBUG_MSG(program, "error: pc overflow (0x%03hX)\n", *pc);
 				Stop = 1;
 				break;
@@ -576,12 +577,12 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 			struct chip8_opcode opcode = opcode_from_bytes(mem[*pc], mem[(*pc)+1]);
 			switch (opcode.value & 0xF000) {
 			case 0x0000:
-				switch (opcode.value & 0xFF) {
-				case 0xE0:
+				switch (opcode.value & 0xFFF) {
+				case 0x0E0:
 					memset(video, 0, VIDEO_BYTES);
 					*pc += 2;
 					break;
-				case 0xEE:
+				case 0x0EE:
 					if ((*sp-1) >= STACK_COUNT) {
 						CHIP8_DEBUG_MSG(program, "error: stack overflow (0x%03x) pc (0x%03x)", *sp-1, *pc);
 						Stop = 1;
@@ -590,8 +591,13 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 					--*sp;
 					*pc = stack[*sp];
 					break;
+				case 0x000:
+					/* NOP */
+					*pc += 2;
+					break;
 				default:
-					/* advance over NOP and ignore RCA 1802 subroutines (0NNN) */
+					/* RCA 1802 subroutines (0NNN) */
+					CHIP8_DEBUG_MSG(program, "RCA 1802 call (0x%03x) pc (0x%03x)", opcode.value & 0xFFF, *pc);
 					*pc += 2;
 					break;
 				}
@@ -844,9 +850,11 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 		os_draw(video);
 
 		update_keypad(&keypad, time_now, keypad_delay);
+		#if 0
 		if (!Stop) {
 			CHIP8_DEBUG_KEY_STATE(program, keypad);
 		}
+		#endif
 	}
 }
 
@@ -860,7 +868,12 @@ chip8_init(struct chip8_program *dst, uint8_t *src, size_t size)
 	memcpy(&dst->mem[PROG_ADDRESS], src, size);
 	memcpy(&dst->mem[FONT_ADDRESS], Fonts, sizeof Fonts);
 	*(uint16_t *)&dst->mem[SIZE_ADDRESS] = (uint16_t)size;
-	*(uint16_t *)&dst->mem[PC_ADDRESS] = PROG_ADDRESS;
+	*(uint16_t *)&dst->mem[PC_ADDRESS] = 0x1FC;
+	/* what original CHIP-8 did on COSMAC VIP on boot:
+	 * clears display and turns on display (0x004B)
+	 */
+	*(uint16_t *)&dst->mem[0x1FC] = 0xE000;
+	*(uint16_t *)&dst->mem[0x1FE] = 0x4B00;
 	return true;
 }
 
