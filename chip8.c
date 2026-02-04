@@ -10,88 +10,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-#ifndef MIN
-#define MIN(A,B) ((A)<(B)?(A):(B))
-#endif
-
-/* Memory map for 4K COSMAC VIP */
-#define PC_ADDRESS	0x000
-#define PCPREV_ADDRESS	0x002
-#define I_ADDRESS	0x004
-#define SIZE_ADDRESS	0x006
-#define ACC_ADDRESS	0x008
-#define SP_ADDRESS	0x00A
-#define DELAY_ADDRESS	0x00B
-#define SOUND_ADDRESS	0x00C
-#define V_ADDRESS	0x00D
-#define FONT_ADDRESS	0x01D
-#define ERROR_ADDRESS	0x06D
-#define PROG_ADDRESS	0x200
-#define PROG_END	0xE9F
-#define STACK_ADDRESS	0xEA0
-#define VIDEO_ADDRESS	0xF00
-#define MEMORY_SIZE	0x1000
-
-#define ERROR_SIZE	127
-#define FLAG_REG	15
-#define FONT_SIZE	80
-#define FONT_WIDTH	5
-#define PC_START	0x1FC
-#define PROG_MAX	(PROG_END - PROG_ADDRESS + 1)
-#define STACK_COUNT	12
-#define VIDEO_BYTES	256
-#define VIDEO_HEIGHT	32
-#define VIDEO_WIDTH	64
-
-#define CHIP8_ORIGINAL_QUIRKS (CHIP8_QUIRK_INCREMENT_I | CHIP8_QUIRK_RESET_VF | CHIP8_QUIRK_VBLANK_WAIT)
-
-#define OPCODE_STR_MAX	18
-
-#define MAX_PROGRAMS 10
-
-#define DOUBLE_WIDTH_OUTPUTx
-
-#define CHIP8_DEBUG_MSG(PROG,...)				\
-do {								\
-	char *e = (char *)&(PROG)->mem[ERROR_ADDRESS];		\
-	int n = snprintf(e+1, ERROR_SIZE, __VA_ARGS__);		\
-	if (n < 0 || n >= ERROR_SIZE) {				\
-		n = snprintf(e+1, ERROR_SIZE,			\
-			"error: %d debug message too long; "	\
-			"expected %d, actual %d",		\
-			 __LINE__, ERROR_SIZE-1, n);		\
-	}							\
-	if (n < 0 || n >= ERROR_SIZE) {				\
-		*(uint8_t *)e = 0;				\
-		*(uint8_t *)(e+1) = 0;				\
-	}							\
-} while(0);
-
-#define BYTE_TO_BINARY(byte)		\
-	((byte) & 0x80 ? '1' : '0'),	\
-	((byte) & 0x40 ? '1' : '0'),	\
-	((byte) & 0x20 ? '1' : '0'),	\
-	((byte) & 0x10 ? '1' : '0'),	\
-	((byte) & 0x08 ? '1' : '0'),	\
-	((byte) & 0x04 ? '1' : '0'),	\
-	((byte) & 0x02 ? '1' : '0'),	\
-	((byte) & 0x01 ? '1' : '0')
-
-#define SHORT_TO_BINARY(word)	BYTE_TO_BINARY(((word & 0xFF00)>>8)),BYTE_TO_BINARY(((word & 0xFF)))
-
-#define CHIP8_DEBUG_KEY_STATE(PROG,KEY)						\
-do {										\
-	CHIP8_DEBUG_MSG((PROG),"keys "						\
-		"down: %c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c "			\
-		"up: %c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c",				\
-		SHORT_TO_BINARY((KEY).down), SHORT_TO_BINARY((KEY).up));	\
-	if (0) {								\
-	fprintf(stderr,"keys "							\
-		"down: %c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c "			\
-		"up: %c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c\n",			\
-		SHORT_TO_BINARY((KEY).down), SHORT_TO_BINARY((KEY).up));	\
-	}									\
-} while(0)
+#define PROGRAM_MAX_SIZE (0xEA0 - 0x200)
 
 static uint8_t DemoRandomTimer[] =
 {
@@ -99,14 +18,6 @@ static uint8_t DemoRandomTimer[] =
 	0x62, 0x0E, 0xD1, 0x25, 0x63, 0x1E, 0xF3, 0x15,
 	0xF4, 0x07, 0x34, 0x00, 0x12, 0x10, 0xD1, 0x25,
 	0x12, 0x02
-};
-
-static uint8_t *Demos[] = {
-	DemoRandomTimer
-};
-
-static size_t DemosSize[] = {
-	sizeof DemoRandomTimer
 };
 
 enum chip8_quirks
@@ -118,21 +29,39 @@ enum chip8_quirks
 	CHIP8_QUIRK_INCREMENT_I = 0x08, /* FX55 and FX65 increments the I address */
 	CHIP8_QUIRK_RESET_VF    = 0x10, /* 8XY1, 8XY2 and 8XY3 set VF to zero */
 	CHIP8_QUIRK_VBLANK_WAIT = 0x20, /* DXYN a single sprite is drawn per VBLANK */
+	CHIP8_QUIRK_ORIGINAL    = CHIP8_QUIRK_INCREMENT_I | CHIP8_QUIRK_RESET_VF | CHIP8_QUIRK_VBLANK_WAIT
 };
 
 struct chip8_program
 {
-	uint8_t mem[MEMORY_SIZE];
-} __attribute__ ((aligned (2)));
+	uint16_t pc;
+	uint16_t sp;
+	uint16_t stack;
+	uint16_t i;
+	uint16_t v;
+	uint16_t bp;
+	uint16_t len;
+	uint8_t sound;
+	uint8_t timer;
+	uint8_t mem[0x1000];
+};
+
+struct chip8_context
+{
+	struct chip8_program *program;
+	int opcodes_per_frame;
+	int keypad_response_time;
+	enum chip8_quirks quirks;
+};
 
 struct chip8_opcode
 {
-	uint16_t value;
 	uint16_t nnn;
 	uint8_t nn;
 	uint8_t n;
 	uint8_t vx;
 	uint8_t vy;
+	uint8_t group;
 };
 
 struct keypad
@@ -143,7 +72,7 @@ struct keypad
 	bool held;
 };
 
-static uint8_t Fonts[FONT_SIZE] = {
+static uint8_t Fonts[] = {
 	0xF0, 0x90, 0x90, 0x90, 0xF0, /* Font 0 */
 	0x20, 0x60, 0x20, 0x20, 0x70, /* Font 1 */
 	0xF0, 0x10, 0xF0, 0x80, 0xF0, /* Font 2 */
@@ -161,10 +90,8 @@ static uint8_t Fonts[FONT_SIZE] = {
 	0xF0, 0x80, 0xF0, 0x80, 0xF0, /* Font E */
 	0xF0, 0x80, 0xF0, 0x80, 0x80  /* Font F */
 };
-static volatile sig_atomic_t Quit = 0;
 static volatile sig_atomic_t Stop = 0;
 static volatile sig_atomic_t Dump = 0;
-static struct chip8_program Programs[MAX_PROGRAMS];
 
 static void
 os_write(int fd, char *s, size_t n)
@@ -180,12 +107,6 @@ os_write(int fd, char *s, size_t n)
 }
 
 static void
-write_err(char *s, size_t n)
-{
-	os_write(STDERR_FILENO, s, n);
-}
-
-static void
 write_str(char *s, size_t n)
 {
 	os_write(STDOUT_FILENO, s, n);
@@ -198,51 +119,43 @@ write_byte(char s)
 }
 
 static void
-os_beep()
+os_beep(void)
 {
 	write_byte(07);
 }
 
-static const char AnsiEscHome[] = { '\033', '[', 'H' };
-static const char EndOfLine[] = { '\r', '\n' };
-#ifdef DOUBLE_WIDTH_OUTPUT
-static const char PixelOn[]  = { '\033', '[', '9', '2', 'm', 0xE2, 0x96, 0x88, 0xE2, 0x96, 0x88, '\033', '[', '0', 'm' };
-static const char PixelOff[] = { '\033', '[', '3', '2', 'm', 0xE2, 0x96, 0x91, 0xE2, 0x96, 0x91, '\033', '[', '0', 'm' };
-#else
-static const char PixelOn[]  = { '\033', '[', '9', '2', 'm', 0xE2, 0x96, 0x88, '\033', '[', '0', 'm' };
-static const char PixelOff[] = { '\033', '[', '3', '2', 'm', 0xE2, 0x96, 0x91, '\033', '[', '0', 'm' };
-#endif
-static char DrawBuffer[(sizeof AnsiEscHome) + (VIDEO_HEIGHT * VIDEO_WIDTH * (sizeof PixelOn)) + ((sizeof EndOfLine) * VIDEO_HEIGHT)];
+static const char EscHome[] = { '\033', '[', 'H' };
+static const char LineEnd[] = { '\r', '\n' };
+static const char BitOn[]  = { '\033', '[', '9', '2', 'm', 0xE2, 0x96, 0x88, '\033', '[', '0', 'm' };
+static const char BitOff[] = { '\033', '[', '3', '2', 'm', 0xE2, 0x96, 0x91, '\033', '[', '0', 'm' };
+static char BitmapDest[(sizeof EscHome) + (32 * 64 * (sizeof BitOn)) + ((sizeof LineEnd) * 32)];
+static size_t BitmapStride = 64 * (sizeof BitOn) + (sizeof LineEnd);
 
 static void
-os_draw(uint8_t *video)
+os_bit_blit(uint8_t *src)
 {
-	size_t n = 0;
-	for (size_t i = 0; i < sizeof AnsiEscHome; i++) {
-		DrawBuffer[n++] = AnsiEscHome[i];
-	}
-	for (uint8_t y = 0; y < VIDEO_HEIGHT; y++) {
-		for (uint8_t x = 0; x < VIDEO_WIDTH; x++) {
-			uint8_t byte = video[(y * VIDEO_WIDTH + x) / 8];
+	char *dst = BitmapDest + (sizeof EscHome);
+	for (uint8_t y = 0; y < 32; y++) {
+		char *d = dst;
+		for (uint8_t x = 0; x < 64; x++) {
+			uint8_t byte = src[(y * 64 + x) / 8];
 			if (byte & (1 << (7 - x % 8))) {
-				for (size_t i = 0; i < sizeof PixelOn; i++) {
-					DrawBuffer[n++] = PixelOn[i];
+				for (size_t i = 0; i < sizeof BitOn; i++) {
+					*d++ = BitOn[i];
 				}
 			} else {
-				for (size_t i = 0; i < sizeof PixelOff; i++) {
-					DrawBuffer[n++] = PixelOff[i];
+				for (size_t i = 0; i < sizeof BitOff; i++) {
+					*d++ = BitOff[i];
 				}
 			}
 		}
-		for (size_t i = 0; i < sizeof EndOfLine; i++) {
-			DrawBuffer[n++] = EndOfLine[i];
-		}
+		dst += BitmapStride;
 	}
-	write_str(DrawBuffer, n);
+	write_str(BitmapDest, sizeof BitmapDest);
 }
 
 static bool
-os_is_key_pressed()
+os_is_key_pressed(void)
 {
 	fd_set fd;
 	FD_ZERO(&fd);
@@ -289,12 +202,12 @@ os_read_key(uint8_t *ch)
 }
 
 static uint16_t
-os_read_keys()
+os_read_keys(void)
 {
 	uint16_t res = 0;
 	int n = 4;
 	while (os_is_key_pressed() && n--) {
-		uint8_t ch;	
+		uint8_t ch;
 		if (!os_read_key(&ch)) {
 			break;
 		}
@@ -327,7 +240,7 @@ update_keypad(struct keypad *keypad, int64_t now, int timeout_ms)
 }
 
 static int64_t
-os_get_time()
+os_get_time(void)
 {
 	struct timespec ts;
 	clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -351,7 +264,7 @@ opcode_from_bytes(uint8_t hi, uint8_t lo)
 {
 	uint16_t opcode = (hi << 8 | lo) & 0xFFFF;
 	return (struct chip8_opcode) {
-		.value = opcode,
+		.group = (opcode & 0xF000) >> 12,
 		.vx    = (opcode & 0x0F00) >> 8,
 		.vy    = (opcode & 0x00F0) >> 4,
 		.nnn   = (opcode & 0x0FFF),
@@ -363,22 +276,24 @@ opcode_from_bytes(uint8_t hi, uint8_t lo)
 static bool
 opcode_to_string(char *dst, size_t len, struct chip8_opcode opcode)
 {
-	switch (opcode.value & 0xF000) {
-	case 0x0000:
-		switch (opcode.value & 0x0FFF) {
-		case 0x0E0: snprintf(dst, len, "cls"); return true;
-		case 0x0EE: snprintf(dst, len, "ret"); return true;
+	switch (opcode.group) {
+	case 0x0:
+		switch (opcode.nnn) {
+		case 0xE0: snprintf(dst, len, "cls"); return true;
+		case 0xEE: snprintf(dst, len, "ret"); return true;
+		//case 0x00: return false;
+		//default: snprintf(dst, len, "syscall"); return true;
 		}
 		break;
-	case 0x1000: snprintf(dst, len, "jp   0x%03x",       opcode.nnn);           return true;
-	case 0x2000: snprintf(dst, len, "call 0x%03x",       opcode.nnn);           return true;
-	case 0x3000: snprintf(dst, len, "se   %%%x, 0x%02x", opcode.vx, opcode.nn); return true;
-	case 0x4000: snprintf(dst, len, "sne  %%%x, 0x%02x", opcode.vx, opcode.nn); return true;
-	case 0x5000: snprintf(dst, len, "se   %%%x, %%%x",   opcode.vx, opcode.vy); return true;
-	case 0x6000: snprintf(dst, len, "ld   %%%x, 0x%02x", opcode.vx, opcode.nn); return true;
-	case 0x7000: snprintf(dst, len, "add  %%%x, 0x%02x", opcode.vx, opcode.nn); return true;
-	case 0x8000:
-		switch (opcode.value & 0x000F) {
+	case 0x1: snprintf(dst, len, "jp   0x%03x",       opcode.nnn);           return true;
+	case 0x2: snprintf(dst, len, "call 0x%03x",       opcode.nnn);           return true;
+	case 0x3: snprintf(dst, len, "se   %%%x, 0x%02x", opcode.vx, opcode.nn); return true;
+	case 0x4: snprintf(dst, len, "sne  %%%x, 0x%02x", opcode.vx, opcode.nn); return true;
+	case 0x5: snprintf(dst, len, "se   %%%x, %%%x",   opcode.vx, opcode.vy); return true;
+	case 0x6: snprintf(dst, len, "ld   %%%x, 0x%02x", opcode.vx, opcode.nn); return true;
+	case 0x7: snprintf(dst, len, "add  %%%x, 0x%02x", opcode.vx, opcode.nn); return true;
+	case 0x8:
+		switch (opcode.n) {
 		case 0x0: snprintf(dst, len, "ld   %%%x, %%%x", opcode.vx, opcode.vy); return true;
 		case 0x1: snprintf(dst, len, "or   %%%x, %%%x", opcode.vx, opcode.vy); return true;
 		case 0x2: snprintf(dst, len, "and  %%%x, %%%x", opcode.vx, opcode.vy); return true;
@@ -390,19 +305,19 @@ opcode_to_string(char *dst, size_t len, struct chip8_opcode opcode)
 		case 0xE: snprintf(dst, len, "shl  %%%x",       opcode.vx);            return true;
 		}
 		break;
-	case 0x9000: snprintf(dst, len, "sne  %%%x, %%%x",   opcode.vx, opcode.vy); return true;
-	case 0xA000: snprintf(dst, len, "ld   %%i, 0x%03x",  opcode.nnn);           return true;
-	case 0xB000: snprintf(dst, len, "jp   %%9, 0x%03x",  opcode.nnn);           return true;
-	case 0xC000: snprintf(dst, len, "rnd  %%%x, 0x%02x", opcode.vx, opcode.nn); return true;
-	case 0xD000: snprintf(dst, len, "drw  %%%x, %%%x, 0x%02x", opcode.vx, opcode.vy, opcode.n); return true;
-	case 0xE000:
-		switch (opcode.value & 0x00FF) {
+	case 0x9: snprintf(dst, len, "sne  %%%x, %%%x",   opcode.vx, opcode.vy); return true;
+	case 0xA: snprintf(dst, len, "ld   %%i, 0x%03x",  opcode.nnn);           return true;
+	case 0xB: snprintf(dst, len, "jp   %%0, 0x%03x",  opcode.nnn);           return true;
+	case 0xC: snprintf(dst, len, "rnd  %%%x, 0x%02x", opcode.vx, opcode.nn); return true;
+	case 0xD: snprintf(dst, len, "drw  %%%x, %%%x, 0x%02x", opcode.vx, opcode.vy, opcode.n); return true;
+	case 0xE:
+		switch (opcode.nn) {
 		case 0x9E: snprintf(dst, len, "skp  %%%x", opcode.vx); return true;
 		case 0xA1: snprintf(dst, len, "skpn %%%x", opcode.vx); return true;
 		}
 		break;
-	case 0xF000:
-		switch (opcode.value & 0x00FF) {
+	case 0xF:
+		switch (opcode.nn) {
 		case 0x07: snprintf(dst, len, "ld   %%%x, $dt", opcode.vx); return true;
 		case 0x0A: snprintf(dst, len, "ld   %%%x, $kb", opcode.vx); return true;
 		case 0x15: snprintf(dst, len, "ld   $dt, %%%x", opcode.vx); return true;
@@ -422,50 +337,29 @@ static void
 chip8_dump(FILE *dst, struct chip8_program *program, bool full)
 {
 	uint8_t *mem = program->mem;
-	uint16_t len = *(uint16_t *)&mem[SIZE_ADDRESS];
 	if (full) {
-		uint16_t *addr  = (uint16_t *)&mem[I_ADDRESS];
-		uint16_t *pc    = (uint16_t *)&mem[PC_ADDRESS];
-		uint16_t *pcprev= (uint16_t *)&mem[PCPREV_ADDRESS];
-		uint16_t *stack = (uint16_t *)&mem[STACK_ADDRESS];
-		uint16_t *acc   = (uint16_t *)&mem[ACC_ADDRESS];
-		uint8_t  *delay = &mem[DELAY_ADDRESS];
-		uint8_t  *v     = &mem[V_ADDRESS];
-		uint8_t  *sp    = &mem[SP_ADDRESS];
-		uint8_t  *sound = &mem[SOUND_ADDRESS];
-		char     *error = (char *)&mem[ERROR_ADDRESS];
-		fprintf(dst, "Name      Addr   Value\n");
-		fprintf(dst, "PC        0x%03X  0x%03X\n", PC_ADDRESS, *pc);
-		fprintf(dst, "PC Prev   0x%03X  0x%03X\n", PCPREV_ADDRESS, *pcprev);
-		fprintf(dst, "I         0x%03X  0x%03X 0x%03X\n", I_ADDRESS, *addr, mem[*addr]);
-		fprintf(dst, "Size      0x%03X  0x%03X\n", SIZE_ADDRESS, len);
-		fprintf(dst, "Accum     0x%03X  0x%04X\n", ACC_ADDRESS, *acc);
-		fprintf(dst, "SP        0x%03X  0x%03X\n", SP_ADDRESS, *sp);
-		fprintf(dst, "Delay     0x%03X  0x%02X\n", DELAY_ADDRESS, *delay);
-		fprintf(dst, "Sound     0x%03X  0x%02X\n", SOUND_ADDRESS, *sound);
-		fprintf(dst, "V         0x%03X  "
+		uint8_t *stack = &mem[program->stack];
+		uint8_t *v = &mem[program->v];
+		fprintf(dst, "PC       0x%03X\n", program->pc);
+		fprintf(dst, "I        0x%03X\n", program->i);
+		fprintf(dst, "SP       0x%03X\n", program->sp);
+		fprintf(dst, "Timer    0x%02X\n", program->timer);
+		fprintf(dst, "Sound    0x%02X\n", program->sound);
+		fprintf(dst, "V        0x%03X  "
 			"0:%02X 1:%02X 2:%02X 3:%02X 4:%02X 5:%02X 6:%02X 7:%02X 8:%02X 9:%02X A:%02X B:%02X C:%02X D:%02X E:%02X F:%02X\n",
-			V_ADDRESS, v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11], v[12], v[13], v[14], v[15]);
-		fprintf(dst, "Error     0x%03X  %s\n", ERROR_ADDRESS, error+1);
-		fprintf(dst, "Flag      0x%03lX  0x%02X\n", &v[FLAG_REG] - mem, v[FLAG_REG]);
-		fprintf(dst, "Font      0x%03X\n", FONT_ADDRESS);
-		fprintf(dst, "Stack     0x%03X  ", STACK_ADDRESS);
-		for (size_t i = 0; i < STACK_COUNT; i++) {
-			fprintf(dst, "0x%04X", stack[i]);
-			if (i < (STACK_COUNT-1)) {
+			program->v, v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11], v[12], v[13], v[14], v[15]);
+		fprintf(dst, "Stack    0x%03X  ", program->stack);
+		for (size_t i = 0; i < 32; i+=2) {
+			fprintf(dst, "0x%03X", stack[i] << 8 | stack[i+1]);
+			if (i < 30) {
 				fprintf(dst, ", ");
 			}
 		}
 		fprintf(dst, "\n");
-		fprintf(dst, "Display   0x%03X\n", VIDEO_ADDRESS);
-		struct chip8_opcode opcode;
-		if (*pc >= PC_START && *pc < PROG_END) {
-			opcode = opcode_from_bytes(mem[*pc], mem[*(pc)+1]);
-			fprintf(dst, "Opcode    0x%03X  0x%04X VX:0x%02X VY:0x%02X N:0x%X NN:0x%02X NNN:0x%03X\n",
-				*pc, opcode.value, opcode.vx, opcode.vy, opcode.n, opcode.nn, opcode.nnn);
-		} else {
-			fprintf(dst, "Opcode    NA\n");
-		}
+		fprintf(dst, "Bitmap   0x%03X\n", program->bp);
+		struct chip8_opcode opcode = opcode_from_bytes(mem[program->pc], mem[program->pc+1]);
+		fprintf(dst, "Opcode   0x%03X Group:0x%01X VX:0x%02X VY:0x%02X N:0x%X NN:0x%02X NNN:0x%03X\n",
+			mem[program->pc] << 8 | mem[program->pc+1], opcode.group, opcode.vx, opcode.vy, opcode.n, opcode.nn, opcode.nnn);
 		fprintf(dst, "\n");
 	}
 	if (full) {
@@ -474,15 +368,15 @@ chip8_dump(FILE *dst, struct chip8_program *program, bool full)
 	ptrdiff_t packidx = 0;
 	ptrdiff_t packmin = PTRDIFF_MAX;
 	ptrdiff_t packmax = full ? 16 : 1;
-	uint8_t *code_beg = &mem[PROG_ADDRESS];
+	uint8_t *code_beg = &mem[full ? 0x1FC : 0x200];
 	uint8_t *beg = full ? mem : code_beg;
-	uint8_t *end = full ? (beg + MEMORY_SIZE) : (code_beg + len);
+	uint8_t *end = full ? (beg + (sizeof program->mem)) : (code_beg + program->len);
 	uint8_t *cur = beg;
 	while (cur < end) {
 		ptrdiff_t offset = cur - mem;
-		char str[OPCODE_STR_MAX];
+		char str[18];
 		uint8_t *next = ((cur+1) < end) ? cur+1 : NULL;
-		bool is_opcode = (cur >= code_beg) && (cur < (mem + PROG_END)) && next &&
+		bool is_opcode = (cur >= code_beg) && (cur < (mem + 0xE9F)) && next && !((uintptr_t)cur & 1) &&
 			         opcode_to_string(str, sizeof str, opcode_from_bytes(*cur, *next));
 		if (is_opcode) {
 			if (packidx) {
@@ -527,31 +421,17 @@ chip8_dump(FILE *dst, struct chip8_program *program, bool full)
 }
 
 static void
-chip8_error(struct chip8_program *program)
+chip8_exec(struct chip8_context *context)
 {
-	char *err = (char *)&program->mem[ERROR_ADDRESS];
-	char *str = err + 1;
-	unsigned char n = *(unsigned char *)err;
-	if (n) {
-		write_err(str, n);
-	}
-}
-
-static void
-chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, enum chip8_quirks quirks)
-{
-	uint8_t  *mem   = program->mem;
-	uint16_t *addr  = (uint16_t *)&mem[I_ADDRESS];
-	uint16_t *pc    = (uint16_t *)&mem[PC_ADDRESS];
-	uint16_t *pcprev= (uint16_t *)&mem[PCPREV_ADDRESS];
-	uint16_t *stack = (uint16_t *)&mem[STACK_ADDRESS];
-	uint16_t *acc   = (uint16_t *)&mem[ACC_ADDRESS];
-	uint8_t  *video = &mem[VIDEO_ADDRESS];
-	uint8_t  *delay = &mem[DELAY_ADDRESS];
-	uint8_t  *v     = &mem[V_ADDRESS];
-	uint8_t  *sp    = &mem[SP_ADDRESS];
-	uint8_t  *sound = &mem[SOUND_ADDRESS];
+	struct chip8_program *program = context->program;
+	enum chip8_quirks quirks = context->quirks;
+	uint8_t *mem = program->mem;
+	uint8_t *stack = &mem[program->stack];
+	uint8_t *bitmap = &mem[program->bp];
+	uint8_t *v = &mem[program->v];
 	struct keypad keypad = { .time = {0}, .down = 0, .up = 0xFFFF, .held = false };
+	uint16_t last_pc;
+	uint16_t temp;
 
 	for (;;) {
 		if (Dump) {
@@ -559,217 +439,195 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 			Dump = 0;
 		}
 		if (Stop) {
-			Stop = 0;
 			break;
 		}
 
 		int64_t time_now = os_get_time();
-		bool vblank_wait = false;
+		bool sprite_drawn = false;
 
-		for (int i = 0; i < ops_per_frame; i++) {
-			if (*pc < PC_START || *pc >= PROG_END) {
-				CHIP8_DEBUG_MSG(program, "error: pc overflow (0x%03hX)\n", *pc);
-				Stop = 1;
-				break;
-			}
-			*pcprev = *pc;
+		for (int i = 0; i < context->opcodes_per_frame; i++) {
+			last_pc = program->pc;
 
-			struct chip8_opcode opcode = opcode_from_bytes(mem[*pc], mem[(*pc)+1]);
-			switch (opcode.value & 0xF000) {
-			case 0x0000:
-				switch (opcode.value & 0xFFF) {
-				case 0x0E0:
-					memset(video, 0, VIDEO_BYTES);
-					*pc += 2;
+			struct chip8_opcode opcode = opcode_from_bytes(mem[program->pc], mem[program->pc+1]);
+			switch (opcode.group) {
+			case 0x0:
+				switch (opcode.nnn) {
+				case 0xE0:
+					memset(&mem[program->bp], 0, 256);
+					program->pc += 2;
 					break;
-				case 0x0EE:
-					if ((*sp-1) >= STACK_COUNT) {
-						CHIP8_DEBUG_MSG(program, "error: stack overflow (0x%03x) pc (0x%03x)", *sp-1, *pc);
-						Stop = 1;
-						break;
-					}
-					--*sp;
-					*pc = stack[*sp];
-					break;
-				case 0x000:
-					/* NOP */
-					*pc += 2;
+				case 0xEE:
+					program->pc = (stack[program->sp-2] << 8 | stack[program->sp-1]) & 0xFFFF;
+					program->sp -= 2;
 					break;
 				default:
 					/* RCA 1802 subroutines (0NNN) */
-					CHIP8_DEBUG_MSG(program, "RCA 1802 call (0x%03x) pc (0x%03x)", opcode.value & 0xFFF, *pc);
-					*pc += 2;
+					program->pc += 2;
 					break;
 				}
 				break;
-			case 0x1000:
-				*pc = opcode.nnn;
+			case 0x1:
+				program->pc = opcode.nnn;
 				break;
-			case 0x2000:
-				if (*sp >= STACK_COUNT) {
-					CHIP8_DEBUG_MSG(program, "error: stack overflow (0x%03x) pc (0x%03x)", *sp, *pc);
-					Stop = 1;
-					break;
-				}
-				stack[*sp] = *pc + 2;
-				++*sp;
-				*pc = opcode.nnn;
+			case 0x2:
+				stack[program->sp + 0] = ((program->pc + 2) >> 8);
+				stack[program->sp + 1] = ((program->pc + 2) & 0xFF);
+				program->sp += 2;
+				program->pc = opcode.nnn;
 				break;
-			case 0x3000:
-				*pc += v[opcode.vx] == opcode.nn ? 4 : 2;
+			case 0x3:
+				program->pc += v[opcode.vx] == opcode.nn ? 4 : 2;
 				break;
-			case 0x4000:
-				*pc += v[opcode.vx] != opcode.nn ? 4 : 2;
+			case 0x4:
+				program->pc += v[opcode.vx] != opcode.nn ? 4 : 2;
 				break;
-			case 0x5000:
-				*pc += v[opcode.vx] == v[opcode.vy] ? 4 : 2;
+			case 0x5:
+				program->pc += v[opcode.vx] == v[opcode.vy] ? 4 : 2;
 				break;
-			case 0x6000:
+			case 0x6:
 				v[opcode.vx] = opcode.nn;
-				*pc += 2;
+				program->pc += 2;
 				break;
-			case 0x7000:
+			case 0x7:
 				v[opcode.vx] += opcode.nn;
-				*pc += 2;
+				program->pc += 2;
 				break;
-			case 0x8000:
-				switch (opcode.value & 0xF) {
+			case 0x8:
+				switch (opcode.n) {
 				case 0x0:
 					v[opcode.vx] = v[opcode.vy];
-					*pc += 2;
+					program->pc += 2;
 					break;
 				case 0x1:
 					v[opcode.vx] |= v[opcode.vy];
 					if (quirks & CHIP8_QUIRK_RESET_VF) {
-						v[FLAG_REG] = 0;
+						v[0xF] = 0;
 					}
-					*pc += 2;
+					program->pc += 2;
 					break;
 				case 0x2:
 					v[opcode.vx] &= v[opcode.vy];
 					if (quirks & CHIP8_QUIRK_RESET_VF) {
-						v[FLAG_REG] = 0;
+						v[0xF] = 0;
 					}
-					*pc += 2;
+					program->pc += 2;
 					break;
 				case 0x3:
 					v[opcode.vx] ^= v[opcode.vy];
 					if (quirks & CHIP8_QUIRK_RESET_VF) {
-						v[FLAG_REG] = 0;
+						v[0xF] = 0;
 					}
-					*pc += 2;
+					program->pc += 2;
 					break;
 				case 0x4:
-					*acc = v[opcode.vx] + v[opcode.vy];
-					v[opcode.vx] = *acc & 0xFF;
+					temp = v[opcode.vx] + v[opcode.vy];
+					v[opcode.vx] = temp & 0xFF;
 					/* flag is 1 on overflow */
-					v[FLAG_REG] = !!(*acc & 0xFF00);
-					*pc += 2;
+					v[0xF] = !!(temp & 0xFF00);
+					program->pc += 2;
 					break;
 				case 0x5:
-					*acc = v[opcode.vx] - v[opcode.vy];
-					v[opcode.vx] = *acc & 0xFF;
+					temp = v[opcode.vx] - v[opcode.vy];
+					v[opcode.vx] = temp & 0xFF;
 					/* flag is 1 on no borrow */
-					v[FLAG_REG] = !((*acc & 0x8000) >> 15);
-					*pc += 2;
+					v[0xF] = !((temp & 0x8000) >> 15);
+					program->pc += 2;
 					break;
 				case 0x6:
-					*acc = (quirks & CHIP8_QUIRK_SHIFT_VX) ? v[opcode.vx] : v[opcode.vy];
-					v[opcode.vx] = (*acc >> 1) & 0xFF;
-					v[FLAG_REG]  = *acc & 1;
-					*pc += 2;
+					temp = (quirks & CHIP8_QUIRK_SHIFT_VX) ? v[opcode.vx] : v[opcode.vy];
+					v[opcode.vx] = (temp >> 1) & 0xFF;
+					v[0xF] = temp & 1;
+					program->pc += 2;
 					break;
 				case 0x7:
-					*acc = v[opcode.vy] - v[opcode.vx];
-					v[opcode.vx] = *acc & 0xFF;
+					temp = v[opcode.vy] - v[opcode.vx];
+					v[opcode.vx] = temp & 0xFF;
 					/* flag is 1 on no borrow */
-					v[FLAG_REG] = !((*acc & 0x8000) >> 15);
-					*pc += 2;
+					v[0xF] = !((temp & 0x8000) >> 15);
+					program->pc += 2;
 					break;
 				case 0xE:
-					*acc = (quirks & CHIP8_QUIRK_SHIFT_VX) ? v[opcode.vx] : v[opcode.vy];
-					v[opcode.vx] = (*acc << 1) & 0xFF;
-					v[FLAG_REG]  = (*acc & 0x80) >> 7;
-					*pc += 2;
+					temp = (quirks & CHIP8_QUIRK_SHIFT_VX) ? v[opcode.vx] : v[opcode.vy];
+					v[opcode.vx] = (temp << 1) & 0xFF;
+					v[0xF] = (temp & 0x80) >> 7;
+					program->pc += 2;
 					break;
 				}
 				break;
-			case 0x9000:
-				*pc += v[opcode.vx] != v[opcode.vy] ? 4 : 2;
+			case 0x9:
+				program->pc += v[opcode.vx] != v[opcode.vy] ? 4 : 2;
 				break;
-			case 0xA000:
-				*addr = opcode.nnn;
-				*pc += 2;
+			case 0xA:
+				program->i = opcode.nnn;
+				program->pc += 2;
 				break;
-			case 0xB000:
+			case 0xB:
 				if (quirks & CHIP8_QUIRK_JUMP_FROM_X) {
-					*pc = opcode.nnn + v[opcode.vx];
+					program->pc = opcode.nnn + v[opcode.vx];
 				} else {
-					*pc = opcode.nnn + v[0];
+					program->pc = opcode.nnn + v[0];
 				}
 				break;
-			case 0xC000:
+			case 0xC:
 				v[opcode.vx] = (rand() % 256) & opcode.nn;
-				*pc += 2;
+				program->pc += 2;
 				break;
-			case 0xD000:
-				uint8_t x0 = v[opcode.vx] % VIDEO_WIDTH;
-				uint8_t y0 = v[opcode.vy] % VIDEO_HEIGHT;
-				v[FLAG_REG] = 0;
+			case 0xD:
+				uint8_t x0 = v[opcode.vx] % 64;
+				uint8_t y0 = v[opcode.vy] % 32;
+				v[0xF] = 0;
 				for (uint8_t y = 0; y < opcode.n; y++) {
 					uint8_t yc = y0 + y;
-					if (yc >= VIDEO_HEIGHT) {
+					if (yc >= 32) {
 						if (quirks & CHIP8_QUIRK_NO_CLIPPING) {
-							yc %= VIDEO_HEIGHT;
+							yc %= 32;
 						} else {
 							break;
 						}
 					}
-					uint8_t sprite = mem[(*addr + y) & 0xFFF];
+					uint8_t sprite = mem[(program->i + y) & 0xFFF];
 					for (uint8_t sprite_mask = 1 << 7, x = 0; sprite_mask != 0; sprite_mask >>= 1, x++) {
 						if (!(sprite & sprite_mask)) {
 							continue;
 						}
 						uint8_t xc = x0 + x;
-						if (xc >= VIDEO_WIDTH) {
+						if (xc >= 64) {
 							if (quirks & CHIP8_QUIRK_NO_CLIPPING) {
-								xc %= VIDEO_WIDTH;
+								xc %= 64;
 							} else {
 								break;
 							}
 						}
-						uint16_t byte = (yc * VIDEO_WIDTH + xc) / 8;
-						uint8_t mask = (1 << (7 - xc % 8)) & 0xFF;
-						v[FLAG_REG] |= !!(video[byte] & mask);
-						video[byte] ^= mask;
+						uint16_t byte = (yc * 64 + xc) / 8;
+						uint8_t byte_mask = (1 << (7 - xc % 8)) & 0xFF;
+						v[0xF] |= !!(bitmap[byte] & byte_mask);
+						bitmap[byte] ^= byte_mask;
+						sprite_drawn = true;
 					}
 				}
-				*pc += 2;
-				if (quirks & CHIP8_QUIRK_VBLANK_WAIT) {
-					vblank_wait = true;
-				}
+				program->pc += 2;
 				break;
-			case 0xE000:
-				switch (opcode.value & 0xFF) {
+			case 0xE:
+				switch (opcode.nn) {
 				case 0x9E:
-					*pc += (keypad.down & (1 << (v[opcode.vx] & 0xF))) ? 4 : 2;
+					program->pc += (keypad.down & (1 << (v[opcode.vx] & 0xF))) ? 4 : 2;
 					break;
 				case 0xA1:
-					*pc += (keypad.down & (1 << (v[opcode.vx] & 0xF))) ? 2 : 4;
+					program->pc += (keypad.down & (1 << (v[opcode.vx] & 0xF))) ? 2 : 4;
 					break;
 				}
 				break;
-			case 0xF000:
-				switch (opcode.value & 0xFF) {
+			case 0xF:
+				switch (opcode.nn) {
 				case 0x07:
-					v[opcode.vx] = *delay;
-					*pc += 2;
+					v[opcode.vx] = program->timer;
+					program->pc += 2;
 					break;
 				case 0x0A:
 					if (keypad.held) {
 						if (keypad.up & (1 << (v[opcode.vx] & 0xF))) {
 							keypad.held = false;
-							*pc += 2;
+							program->pc += 2;
 						}
 					} else if (keypad.down) {
 						v[opcode.vx] = __builtin_ctz(keypad.down) & 0xF;
@@ -777,103 +635,117 @@ chip8_exec(struct chip8_program *program, int ops_per_frame, int keypad_delay, e
 					}
 					break;
 				case 0x15:
-					*delay = v[opcode.vx];
-					*pc += 2;
+					program->timer = v[opcode.vx];
+					program->pc += 2;
 					break;
 				case 0x18:
-					*sound = v[opcode.vx];
-					*pc += 2;
+					program->sound = v[opcode.vx];
+					program->pc += 2;
 					break;
 				case 0x1E:
-					*addr = (*addr + v[opcode.vx]) & 0xFFF;
-					*pc += 2;
+					/* font data starts at mem[0] */
+					program->i = (program->i + v[opcode.vx]) & 0xFFF;
+					program->pc += 2;
 					break;
 				case 0x29:
-					*addr = (FONT_ADDRESS + (v[opcode.vx] & 0xF) * FONT_WIDTH) & 0xFFF;
-					*pc += 2;
+					program->i = ((v[opcode.vx] & 0xF) * 5) & 0xFFF;
+					program->pc += 2;
 					break;
 				case 0x33:
-					mem[(*addr + 0) & 0xFFF] = v[opcode.vx] / 100;
-					mem[(*addr + 1) & 0xFFF] = v[opcode.vx] / 10 % 10;
-					mem[(*addr + 2) & 0xFFF] = v[opcode.vx] % 10;
-					*pc += 2;
+					mem[(program->i + 0) & 0xFFF] = v[opcode.vx] / 100;
+					mem[(program->i + 1) & 0xFFF] = v[opcode.vx] / 10 % 10;
+					mem[(program->i + 2) & 0xFFF] = v[opcode.vx] % 10;
+					program->pc += 2;
 					break;
 				case 0x55:
 					for (uint8_t x = 0; x <= opcode.vx; x++) {
-						mem[(*addr + x) & 0xFFF] = v[x];
+						mem[(program->i + x) & 0xFFF] = v[x];
 					}
 					if (quirks & CHIP8_QUIRK_INCREMENT_I) {
-						*addr = (*addr + opcode.vx + 1) & 0xFFF;
+						program->i = (program->i + opcode.vx + 1) & 0xFFF;
 					}
-					*pc += 2;
+					program->pc += 2;
 					break;
 				case 0x65:
 					for (uint8_t x = 0; x <= opcode.vx; x++) {
-						v[x] = mem[(*addr + x) & 0xFFF];
+						v[x] = mem[(program->i + x) & 0xFFF];
 					}
 					if (quirks & CHIP8_QUIRK_INCREMENT_I) {
-						*addr = (*addr + opcode.vx + 1) & 0xFFF;
+						program->i = (program->i + opcode.vx + 1) & 0xFFF;
 					}
-					*pc += 2;
+					program->pc += 2;
 					break;
 				}
 				break;
 			}
 
-			if (*pcprev == *pc) {
-				bool wait = (opcode.value & 0xF000) == 0xF000 && opcode.nn == 0x0A;
-				bool halt = (opcode.value & 0xF000) == 0x1000 && opcode.nnn == *pc;
+			if ((quirks & CHIP8_QUIRK_VBLANK_WAIT) && sprite_drawn) {
+				break;
+			}
+
+			if (last_pc == program->pc) {
+				bool wait = opcode.group == 0xF && opcode.nn == 0x0A;
+				bool halt = opcode.group == 0x1 && opcode.nnn == program->pc;
 				if (!(wait || halt)) {
-					CHIP8_DEBUG_MSG(program, "error: pc did not advance from 0x%03X; opcode 0x%04X", *pc, opcode.value);
 					Dump = 1;
 					Stop = 1;
 				}
 				break;
 			}
-
-			if (vblank_wait) {
-				break;
-			}
 		}
 
-		if (*delay) {
-			--*delay;
+		if (program->timer) {
+			--program->timer;
 		}
 
-		if (*sound) {
+		if (program->sound) {
 			os_beep();
-			--*sound;
+			--program->sound;
 		}
 
 		os_wait_frame(time_now);
-
-		os_draw(video);
-
-		update_keypad(&keypad, time_now, keypad_delay);
-		#if 0
-		if (!Stop) {
-			CHIP8_DEBUG_KEY_STATE(program, keypad);
-		}
-		#endif
+		os_bit_blit(&mem[program->bp]);
+		update_keypad(&keypad, time_now, context->keypad_response_time);
 	}
 }
 
 static bool
-chip8_init(struct chip8_program *dst, uint8_t *src, size_t size)
+chip8_init(struct chip8_program *program, uint8_t *data, size_t size)
 {
-	if (size > PROG_MAX) {
+	if (size > PROGRAM_MAX_SIZE) {
 		return false;
 	}
-	memset(dst, 0, sizeof *dst);
-	memcpy(&dst->mem[PROG_ADDRESS], src, size);
-	memcpy(&dst->mem[FONT_ADDRESS], Fonts, sizeof Fonts);
-	*(uint16_t *)&dst->mem[SIZE_ADDRESS] = (uint16_t)size;
-	*(uint16_t *)&dst->mem[PC_ADDRESS] = 0x1FC;
-	/* what original CHIP-8 did on COSMAC VIP on boot:
-	 * clears display and turns on display (0x004B)
+
+	/* only required when may want a full memory dump; avoids
+	 * parsing uninitialized memory as opcodes at end of program
 	 */
-	*(uint16_t *)&dst->mem[0x1FC] = 0xE000;
-	*(uint16_t *)&dst->mem[0x1FE] = 0x4B00;
+	memset(program, 0, sizeof *program);
+
+	/* Memory map https://www.laurencescotford.net/2020/07/14/chip-8-ram-or-memory-management-with-chip-8
+	 * Copy font data to somewhere in the range [0x0,0x1FC); place at 0 for opcode FX29
+	 */
+	uint16_t font_offset   = 0x000;
+	uint16_t boot_offset   = 0x1FC;
+	uint16_t prog_offset   = 0x200;
+	uint16_t stack_offset  = 0xEA0;
+	uint16_t reg_offset    = 0xEF0;
+	uint16_t bitmap_offset = 0xF00;
+	memcpy(program->mem + font_offset, Fonts, sizeof Fonts);
+	memcpy(program->mem + prog_offset, data, size);
+	program->pc    = boot_offset;
+	program->stack = stack_offset;
+	program->v     = reg_offset;
+	program->bp    = bitmap_offset;
+	program->len   = (uint16_t)size;
+	program->i     = 0;
+	program->sound = 0;
+	program->timer = 0;
+	program->sp    = 0;
+	/* COSMAC VIP boot sequence: clear display and syscall to turn on display */
+	program->mem[boot_offset + 0] = 0x00;
+	program->mem[boot_offset + 1] = 0xE0;
+	program->mem[boot_offset + 2] = 0x00;
+	program->mem[boot_offset + 3] = 0x4B;
 	return true;
 }
 
@@ -885,21 +757,29 @@ os_signal_handler(int signal)
 	} else if (signal == SIGQUIT) {
 		Dump = 1;
 		Stop = 1;
-		Quit = 1;
 	} else if (signal == SIGHUP) {
 		Dump = 1;
 	}
 }
 
-static void
-os_init(void *state)
+static struct termios
+os_init(void)
 {
+	char *bitmap = BitmapDest;
+	memcpy(bitmap, EscHome, (sizeof EscHome));
+	bitmap += sizeof EscHome;
+	for (int i = 0; i < 32; i++) {
+		bitmap += 64 * (sizeof BitOn);
+		memcpy(bitmap, LineEnd, (sizeof LineEnd));
+		bitmap += sizeof LineEnd;
+	}
+
 	signal(SIGHUP, os_signal_handler);
 	signal(SIGINT, os_signal_handler);
 	signal(SIGQUIT, os_signal_handler);
 	signal(SIGTERM, os_signal_handler);
 
-	char *s = "\033[?25l\033[2J\033[H";
+	char s[] = "\033[?25l\033[2J\033[H";
 	write_str(s, (sizeof s)-1);
 
 	struct termios prev;
@@ -909,105 +789,83 @@ os_init(void *state)
 	termios.c_cc[VMIN] = 0;
 	termios.c_cc[VTIME] = 0;
 	tcsetattr(STDIN_FILENO, TCSAFLUSH, &termios);
-	*(struct termios *)state = prev;
+	return prev;
 }
 
 static void
-os_term(void *termios)
+os_term(struct termios *termios)
 {
-	tcsetattr(STDIN_FILENO, TCSAFLUSH, (struct termios *)termios);
-	char *s = "\033[H\033[2J\033[?25h";
+	tcsetattr(STDIN_FILENO, TCSAFLUSH, termios);
+	char s[] = "\033[H\033[2J\033[?25h";
 	write_str(s, (sizeof s)-1);
 }
 
-static size_t
-load_file(char **files, size_t nfiles)
+static bool
+load_file(char *filename, struct chip8_program *dst)
 {
-	uint8_t tmp[PROG_MAX+1];
-	size_t i;
-	for (i = 0; i < nfiles; i++) {
-		FILE *file = fopen(files[i], "rb");
-		if (!file) {
-			fprintf(stderr, "error: cannot open program %s\n", files[i]);
-			break;
-		}
-
-		size_t nread = fread(tmp, 1, sizeof tmp, file);
-		int eof = feof(file);
-		fclose(file);
-		if (!(eof && nread)) {
-			fprintf(stderr, "error: cannot read program %s\n", files[i]);
-			break;
-		}
-
-		if (!chip8_init(&Programs[i], tmp, nread)) {
-			fprintf(stderr, "error: cannot load program %s\n", files[i]);
-			break;
-		}
+	uint8_t tmp[PROGRAM_MAX_SIZE+1];
+	FILE *file = fopen(filename, "rb");
+	if (!file) {
+		fprintf(stderr, "error: cannot open program %s\n", filename);
+		return false;
 	}
-	return i;
-}
-
-static size_t
-load_builtin()
-{
-	size_t i;
-	for (i = 0; i < (sizeof Demos / sizeof Demos[0]); i++) {
-		if (!chip8_init(&Programs[i], Demos[i], DemosSize[i])) {
-			fprintf(stderr, "error: cannot load program %zu\n", i);
-			break;
-		}
+	size_t nread = fread(tmp, 1, sizeof tmp, file);
+	int eof = feof(file);
+	fclose(file);
+	if (!(eof && nread)) {
+		fprintf(stderr, "error: cannot read program %s\n", filename);
+		return false;
 	}
-	return i;
+	if (!chip8_init(dst, tmp, nread)) {
+		fprintf(stderr, "error: cannot load program %s\n", filename);
+		return false;
+	}
+	return true;
 }
 
 int
 main(int argc, char **argv)
 {
+	struct chip8_program program;
 	bool disasm_and_quit = false;
 
 	setlocale(LC_ALL, "en_US.UTF-8");
 	srand((unsigned int)time(NULL));
 
-	size_t num_progs = 0;
 	--argc;
 	++argv;
 	if (argc) {
-		if (strcmp(argv[argc-1], "-disasm") == 0) {
+		if (strcmp(*argv, "-disasm") == 0) {
 			disasm_and_quit = true;
 			--argc;
+			++argv;
 		}
 	}
 	if (argc) {
-		num_progs = load_file(argv, MIN((size_t)argc,MAX_PROGRAMS));
+		if (!load_file(*argv, &program)) {
+			return 1;
+		}
 	} else {
-		num_progs = load_builtin();
+		if (!chip8_init(&program, DemoRandomTimer, sizeof DemoRandomTimer)) {
+			fprintf(stderr, "error: cannot load demo program\n");
+			return 1;
+		}
 	}
 
 	if (disasm_and_quit) {
-		for (size_t i = 0; i < num_progs; i++) {
-			chip8_dump(stderr, &Programs[i], false);
-			if (i < (num_progs-1)) {
-				fprintf(stderr, "\n");
-			}
-		}
+		chip8_dump(stderr, &program, false);
 		return 0;
 	}
 
-	if (!num_progs) {
-		return 1;
-	}
+	struct termios old_state = os_init();
 
-	struct termios old_state;
-	os_init(&old_state);
-
-	for (size_t i = 0; i < num_progs; i++) {
-		chip8_exec(&Programs[i], 10, 30, CHIP8_QUIRK_SHIFT_VX);
-		chip8_error(&Programs[i]);
-		if (Quit) {
-			break;
-		}
-	}
+	struct chip8_context context = {
+		.program = &program,
+		.opcodes_per_frame = 10,
+		.keypad_response_time = 30,
+		.quirks = CHIP8_QUIRK_SHIFT_VX
+	};
+	chip8_exec(&context);
 
 	os_term(&old_state);
 
