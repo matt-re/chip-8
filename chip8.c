@@ -124,32 +124,33 @@ os_beep(void)
 	write_byte(07);
 }
 
-static const char EscHome[] = { '\033', '[', 'H' };
-static const char LineEnd[] = { '\r', '\n' };
-static const char BitOn[]  = { '\033', '[', '9', '2', 'm', 0xE2, 0x96, 0x88, '\033', '[', '0', 'm' };
-static const char BitOff[] = { '\033', '[', '3', '2', 'm', 0xE2, 0x96, 0x91, '\033', '[', '0', 'm' };
-static char BitmapDest[(sizeof EscHome) + (32 * 64 * (sizeof BitOn)) + ((sizeof LineEnd) * 32)];
-static size_t BitmapStride = 64 * (sizeof BitOn) + (sizeof LineEnd);
+#define PIXEL_SIZE	12
+#define BITMAP_STRIDE	(64 * PIXEL_SIZE + 2)
+static char BitmapDest[3 + 32 * BITMAP_STRIDE];
 
 static void
 os_bit_blit(uint8_t *src)
 {
-	char *dst = BitmapDest + (sizeof EscHome);
-	for (uint8_t y = 0; y < 32; y++) {
+	char *dst = BitmapDest + 3;
+	for (unsigned y = 0; y < 32; y++) {
 		char *d = dst;
-		for (uint8_t x = 0; x < 64; x++) {
-			uint8_t byte = src[(y * 64 + x) / 8];
-			if (byte & (1 << (7 - x % 8))) {
-				for (size_t i = 0; i < sizeof BitOn; i++) {
-					*d++ = BitOn[i];
-				}
-			} else {
-				for (size_t i = 0; i < sizeof BitOff; i++) {
-					*d++ = BitOff[i];
-				}
-			}
+		for (unsigned x = 0; x < 64; x++) {
+			*d++ = '\033';
+			*d++ = '[';
+			*d++ = '9';
+			*d++ = '2';
+			*d++ = 'm';
+			*d++ = 0xE2;
+			*d++ = 0x96;
+			unsigned byte = src[(y * 64 + x) / 8];
+			unsigned bit = 1 << (7 - x % 8);
+			*d++ = (byte & bit) ? 0x88 : 0x91;
+			*d++ = '\033';
+			*d++ = '[';
+			*d++ = '0';
+			*d++ = 'm';
 		}
-		dst += BitmapStride;
+		dst += BITMAP_STRIDE;
 	}
 	write_str(BitmapDest, sizeof BitmapDest);
 }
@@ -764,12 +765,13 @@ static struct termios
 os_init(void)
 {
 	char *bitmap = BitmapDest;
-	memcpy(bitmap, EscHome, (sizeof EscHome));
-	bitmap += sizeof EscHome;
-	for (int i = 0; i < 32; i++) {
-		bitmap += 64 * (sizeof BitOn);
-		memcpy(bitmap, LineEnd, (sizeof LineEnd));
-		bitmap += sizeof LineEnd;
+	*bitmap++ = '\033';
+	*bitmap++ = '[';
+	*bitmap++ = 'H';
+	for (int y = 0; y < 32; y++) {
+		bitmap += BITMAP_STRIDE - 2;
+		*bitmap++ = '\r';
+		*bitmap++ = '\n';
 	}
 
 	signal(SIGHUP, os_signal_handler);
