@@ -39,7 +39,7 @@ struct chip8_program
 	uint16_t stack;
 	uint16_t i;
 	uint16_t v;
-	uint16_t bp;
+	uint16_t bm;
 	uint16_t len;
 	uint8_t sound;
 	uint8_t timer;
@@ -355,7 +355,7 @@ chip8_dump(FILE *dst, struct chip8_program *program, bool full)
 			}
 		}
 		fprintf(dst, "\n");
-		fprintf(dst, "Bitmap   0x%03X\n", program->bp);
+		fprintf(dst, "Bitmap   0x%03X\n", program->bm);
 		struct chip8_opcode opcode = opcode_from_bytes(mem[program->pc], mem[program->pc+1]);
 		fprintf(dst, "Opcode   0x%03X Group:0x%01X VX:0x%02X VY:0x%02X N:0x%X NN:0x%02X NNN:0x%03X\n",
 			mem[program->pc] << 8 | mem[program->pc+1], opcode.group, opcode.vx, opcode.vy, opcode.n, opcode.nn, opcode.nnn);
@@ -426,7 +426,7 @@ chip8_exec(struct chip8_context *context)
 	enum chip8_quirks quirks = context->quirks;
 	uint8_t *mem = program->mem;
 	uint8_t *stack = &mem[program->stack];
-	uint8_t *bitmap = &mem[program->bp];
+	uint8_t *bitmap = &mem[program->bm];
 	uint8_t *v = &mem[program->v];
 	struct keypad keypad = { .time = {0}, .down = 0, .up = 0xFFFF, .held = false };
 	uint16_t last_pc;
@@ -452,7 +452,7 @@ chip8_exec(struct chip8_context *context)
 			case 0x0:
 				switch (opcode.nnn) {
 				case 0xE0:
-					memset(&mem[program->bp], 0, 256);
+					memset(&mem[program->bm], 0, 256);
 					program->pc += 2;
 					break;
 				case 0xEE:
@@ -703,7 +703,7 @@ chip8_exec(struct chip8_context *context)
 		}
 
 		os_wait_frame(time_now);
-		os_bit_blit(&mem[program->bp]);
+		os_bit_blit(&mem[program->bm]);
 		update_keypad(&keypad, time_now, context->keypad_response_time);
 	}
 }
@@ -734,7 +734,7 @@ chip8_init(struct chip8_program *program, uint8_t *data, size_t size)
 	program->pc    = boot_offset;
 	program->stack = stack_offset;
 	program->v     = reg_offset;
-	program->bp    = bitmap_offset;
+	program->bm    = bitmap_offset;
 	program->len   = (uint16_t)size;
 	program->i     = 0;
 	program->sound = 0;
