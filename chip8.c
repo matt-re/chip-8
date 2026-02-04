@@ -281,8 +281,6 @@ opcode_to_string(char *dst, size_t len, struct chip8_opcode opcode)
 		switch (opcode.nnn) {
 		case 0xE0: snprintf(dst, len, "cls"); return true;
 		case 0xEE: snprintf(dst, len, "ret"); return true;
-		//case 0x00: return false;
-		//default: snprintf(dst, len, "syscall"); return true;
 		}
 		break;
 	case 0x1: snprintf(dst, len, "jp   0x%03x",       opcode.nnn);           return true;
