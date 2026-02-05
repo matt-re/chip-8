@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #define PROGRAM_MAX_SIZE (0xEA0 - 0x200)
+#define STACK_MAX_SIZE   32
 
 static uint8_t DemoRandomTimer[] =
 {
@@ -459,6 +460,11 @@ chip8_exec(struct chip8_context *context)
 					program->pc += 2;
 					break;
 				case 0xEE:
+					if (program->sp < 2) {
+						Dump = 1;
+						Stop = 1;
+						break;
+					}
 					program->pc = (stack[program->sp-2] << 8 | stack[program->sp-1]) & 0xFFFF;
 					program->sp -= 2;
 					break;
@@ -472,6 +478,11 @@ chip8_exec(struct chip8_context *context)
 				program->pc = opcode.nnn;
 				break;
 			case 0x2:
+				if (program->sp + 2 > STACK_MAX_SIZE) {
+					Dump = 1;
+					Stop = 1;
+					break;
+				}
 				stack[program->sp + 0] = ((program->pc + 2) >> 8);
 				stack[program->sp + 1] = ((program->pc + 2) & 0xFF);
 				program->sp += 2;
