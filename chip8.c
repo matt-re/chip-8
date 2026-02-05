@@ -754,11 +754,12 @@ chip8_init(struct chip8_program *program, uint8_t *data, size_t size)
 	program->sound = 0;
 	program->timer = 0;
 	program->sp    = 0;
-	/* COSMAC VIP boot sequence: clear display and syscall to turn on display */
+	/* Boot sequence: CLS (00E0) then JP 0x200 (1200) to program start.
+	 * JP replaces the COSMAC VIP SYS call (004B) which was a no-op. */
 	program->mem[boot_offset + 0] = 0x00;
 	program->mem[boot_offset + 1] = 0xE0;
-	program->mem[boot_offset + 2] = 0x00;
-	program->mem[boot_offset + 3] = 0x4B;
+	program->mem[boot_offset + 2] = 0x12;
+	program->mem[boot_offset + 3] = 0x00;
 	return true;
 }
 
