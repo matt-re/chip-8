@@ -101,6 +101,8 @@ os_write(int fd, char *s, size_t n)
 	while (n) {
 		ssize_t r = write(fd, s, n);
 		if (r < 0) {
+			if (errno == EINTR)
+				continue;
 			return;
 		}
 		s += r;
