@@ -728,7 +728,7 @@ chip8_exec(struct chip8_context *context)
 
 		os_wait_frame(time_now);
 		os_bit_blit(&mem[program->bm]);
-		update_keypad(&keypad, time_now, context->keypad_response_time);
+		update_keypad(&keypad, os_get_time(), context->keypad_response_time);
 	}
 }
 
