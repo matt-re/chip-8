@@ -131,26 +131,29 @@ static char BitmapDest[3 + 32 * BITMAP_STRIDE];
 static void
 os_bit_blit(uint8_t *src)
 {
-	char *dst = BitmapDest + 3;
+	char *dst = BitmapDest;
+	*dst++ = '\033';
+	*dst++ = '[';
+	*dst++ = 'H';
 	for (unsigned y = 0; y < 32; y++) {
-		char *d = dst;
 		for (unsigned x = 0; x < 64; x++) {
-			*d++ = '\033';
-			*d++ = '[';
-			*d++ = '9';
-			*d++ = '2';
-			*d++ = 'm';
-			*d++ = 0xE2;
-			*d++ = 0x96;
+			*dst++ = '\033';
+			*dst++ = '[';
+			*dst++ = '9';
+			*dst++ = '2';
+			*dst++ = 'm';
+			*dst++ = 0xE2;
+			*dst++ = 0x96;
 			unsigned byte = src[(y * 64 + x) / 8];
 			unsigned bit = 1 << (7 - x % 8);
-			*d++ = (byte & bit) ? 0x88 : 0x91;
-			*d++ = '\033';
-			*d++ = '[';
-			*d++ = '0';
-			*d++ = 'm';
+			*dst++ = (byte & bit) ? 0x88 : 0x91;
+			*dst++ = '\033';
+			*dst++ = '[';
+			*dst++ = '0';
+			*dst++ = 'm';
 		}
-		dst += BITMAP_STRIDE;
+		*dst++ = '\r';
+		*dst++ = '\n';
 	}
 	write_str(BitmapDest, sizeof BitmapDest);
 }
@@ -764,16 +767,6 @@ os_signal_handler(int signal)
 static struct termios
 os_init(void)
 {
-	char *bitmap = BitmapDest;
-	*bitmap++ = '\033';
-	*bitmap++ = '[';
-	*bitmap++ = 'H';
-	for (int y = 0; y < 32; y++) {
-		bitmap += BITMAP_STRIDE - 2;
-		*bitmap++ = '\r';
-		*bitmap++ = '\n';
-	}
-
 	signal(SIGHUP, os_signal_handler);
 	signal(SIGINT, os_signal_handler);
 	signal(SIGQUIT, os_signal_handler);
