@@ -372,7 +372,7 @@ chip8_dump(FILE *dst, struct chip8_program *program, bool full)
 	ptrdiff_t packmax = full ? 16 : 1;
 	uint8_t *code_beg = &mem[full ? 0x1FC : 0x200];
 	uint8_t *beg = full ? mem : code_beg;
-	uint8_t *end = full ? (beg + (sizeof program->mem)) : (code_beg + program->len);
+	uint8_t *end = full ? (mem + (sizeof program->mem)) : (code_beg + program->len);
 	uint8_t *cur = beg;
 	while (cur < end) {
 		ptrdiff_t offset = cur - mem;
