@@ -128,9 +128,10 @@ os_beep(void)
 	write_byte(07);
 }
 
-#define PIXEL_SIZE	12
+#define PIXEL_SIZE	3
 #define BITMAP_STRIDE	(64 * PIXEL_SIZE + 2)
-static char BitmapDest[3 + 32 * BITMAP_STRIDE];
+/* \033[H\033[92m ... rows ... \033[0m */
+static char BitmapDest[8 + 32 * BITMAP_STRIDE + 4];
 
 static void
 os_bit_blit(uint8_t *src)
@@ -139,26 +140,26 @@ os_bit_blit(uint8_t *src)
 	*dst++ = '\033';
 	*dst++ = '[';
 	*dst++ = 'H';
+	*dst++ = '\033';
+	*dst++ = '[';
+	*dst++ = '9';
+	*dst++ = '2';
+	*dst++ = 'm';
 	for (unsigned y = 0; y < 32; y++) {
 		for (unsigned x = 0; x < 64; x++) {
-			*dst++ = '\033';
-			*dst++ = '[';
-			*dst++ = '9';
-			*dst++ = '2';
-			*dst++ = 'm';
 			*dst++ = 0xE2;
 			*dst++ = 0x96;
 			unsigned byte = src[(y * 64 + x) / 8];
 			unsigned bit = 1 << (7 - x % 8);
 			*dst++ = (byte & bit) ? 0x88 : 0x91;
-			*dst++ = '\033';
-			*dst++ = '[';
-			*dst++ = '0';
-			*dst++ = 'm';
 		}
 		*dst++ = '\r';
 		*dst++ = '\n';
 	}
+	*dst++ = '\033';
+	*dst++ = '[';
+	*dst++ = '0';
+	*dst++ = 'm';
 	write_str(BitmapDest, sizeof BitmapDest);
 }
 
