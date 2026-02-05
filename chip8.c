@@ -882,7 +882,7 @@ main(int argc, char **argv)
 	struct chip8_context context = {
 		.program = &program,
 		.opcodes_per_frame = 10,
-		.keypad_response_time = 30,
+		.keypad_response_time = 150,
 		.quirks = CHIP8_QUIRK_SHIFT_VX
 	};
 	chip8_exec(&context);
