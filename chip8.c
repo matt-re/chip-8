@@ -213,8 +213,7 @@ static uint16_t
 os_read_keys(void)
 {
 	uint16_t res = 0;
-	int n = 4;
-	while (os_is_key_pressed() && n--) {
+	while (os_is_key_pressed()) {
 		uint8_t ch;
 		if (!os_read_key(&ch)) {
 			break;
