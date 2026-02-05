@@ -597,7 +597,7 @@ chip8_exec(struct chip8_context *context)
 				v[opcode.vx] = arc4random_uniform(256) & opcode.nn;
 				program->pc += 2;
 				break;
-			case 0xD:
+			case 0xD: {
 				uint8_t x0 = v[opcode.vx] % 64;
 				uint8_t y0 = v[opcode.vy] % 32;
 				v[0xF] = 0;
@@ -632,6 +632,7 @@ chip8_exec(struct chip8_context *context)
 				}
 				program->pc += 2;
 				break;
+			}
 			case 0xE:
 				switch (opcode.nn) {
 				case 0x9E:
