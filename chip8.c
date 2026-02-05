@@ -587,7 +587,7 @@ chip8_exec(struct chip8_context *context)
 				}
 				break;
 			case 0xC:
-				v[opcode.vx] = (rand() % 256) & opcode.nn;
+				v[opcode.vx] = arc4random_uniform(256) & opcode.nn;
 				program->pc += 2;
 				break;
 			case 0xD:
@@ -850,8 +850,6 @@ main(int argc, char **argv)
 	bool disasm_and_quit = false;
 
 	setlocale(LC_ALL, "en_US.UTF-8");
-	srand((unsigned int)time(NULL));
-
 	--argc;
 	++argv;
 	if (argc) {
