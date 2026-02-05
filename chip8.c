@@ -457,6 +457,12 @@ chip8_exec(struct chip8_context *context)
 		for (int i = 0; i < context->opcodes_per_frame; i++) {
 			last_pc = program->pc;
 
+			if (program->pc < 0x1FC || program->pc + 1 > 0xE9F) {
+				Dump = 1;
+				Stop = 1;
+				break;
+			}
+
 			struct chip8_opcode opcode = opcode_from_bytes(mem[program->pc], mem[program->pc+1]);
 			switch (opcode.group) {
 			case 0x0:
