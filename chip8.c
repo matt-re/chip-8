@@ -438,6 +438,8 @@ chip8_exec(struct chip8_context *context)
 	struct keypad keypad = { .time = {0}, .down = 0, .up = 0xFFFF, .held_key = UCHAR_MAX };
 	uint16_t last_pc;
 	uint16_t temp;
+	int64_t timer_last = os_get_time();
+	int64_t timer_accumulator = 0;
 
 	for (;;) {
 		if (Dump) {
@@ -711,13 +713,18 @@ chip8_exec(struct chip8_context *context)
 			}
 		}
 
-		if (program->timer) {
-			--program->timer;
-		}
-
-		if (program->sound) {
-			os_beep();
-			--program->sound;
+		int64_t timer_now = os_get_time();
+		timer_accumulator += timer_now - timer_last;
+		timer_last = timer_now;
+		while (timer_accumulator >= INT64_C(16666667)) {
+			timer_accumulator -= INT64_C(16666667);
+			if (program->timer) {
+				--program->timer;
+			}
+			if (program->sound) {
+				os_beep();
+				--program->sound;
+			}
 		}
 
 		os_wait_frame(time_now);
