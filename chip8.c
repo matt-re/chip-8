@@ -72,6 +72,7 @@ struct keypad
 	uint16_t down;
 	uint16_t up;
 	uint8_t held_key; /* UCHAR_MAX = not waiting, 0..15 = waiting for release of this key */
+	int64_t held_key_time; /* timestamp when held_key was first pressed */
 };
 
 static uint8_t Fonts[] = {
@@ -435,7 +436,7 @@ chip8_exec(struct chip8_context *context)
 	uint8_t *stack = &mem[program->stack];
 	uint8_t *bitmap = &mem[program->bm];
 	uint8_t *v = &mem[program->v];
-	struct keypad keypad = { .time = {0}, .down = 0, .up = 0xFFFF, .held_key = UCHAR_MAX };
+	struct keypad keypad = { .time = {0}, .down = 0, .up = 0xFFFF, .held_key = UCHAR_MAX, .held_key_time = 0 };
 	uint16_t last_pc;
 	uint16_t temp;
 	int64_t timer_last = os_get_time();
@@ -643,13 +644,15 @@ chip8_exec(struct chip8_context *context)
 					break;
 				case 0x0A:
 					if (keypad.held_key != UCHAR_MAX) {
-						int64_t elapsed = time_now - keypad.time[keypad.held_key];
-						if (elapsed > INT64_C(1000000) * context->keypad_response_time) {
+						if (keypad.down & (1 << keypad.held_key)) {
+							keypad.held_key_time = time_now;
+						} else if (time_now - keypad.held_key_time > INT64_C(1000000) * context->keypad_response_time) {
 							keypad.held_key = UCHAR_MAX;
 							program->pc += 2;
 						}
 					} else if (keypad.down) {
 						keypad.held_key = __builtin_ctz(keypad.down) & 0xF;
+						keypad.held_key_time = time_now;
 						v[opcode.vx] = keypad.held_key;
 					}
 					break;
