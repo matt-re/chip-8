@@ -747,6 +747,10 @@ chip8_init(struct chip8_program *program, uint8_t *data, size_t size)
 
 	/* Memory map https://www.laurencescotford.net/2020/07/14/chip-8-ram-or-memory-management-with-chip-8
 	 * Copy font data to somewhere in the range [0x0,0x1FC); place at 0 for opcode FX29
+	 *
+	 * V registers, stack, and bitmap are aliased in mem[] at 0xEF0, 0xEA0, and
+	 * 0xF00 respectively. This is intentional and matches the COSMAC VIP layout.
+	 * A ROM writing to high addresses via the I register can corrupt emulator state.
 	 */
 	uint16_t font_offset   = 0x000;
 	uint16_t boot_offset   = 0x1FC;
