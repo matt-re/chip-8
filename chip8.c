@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <limits.h>
 #include <locale.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -70,7 +71,7 @@ struct keypad
 	int64_t time[16];
 	uint16_t down;
 	uint16_t up;
-	bool held;
+	uint8_t held_key; /* UCHAR_MAX = not waiting, 0..15 = waiting for release of this key */
 };
 
 static uint8_t Fonts[] = {
@@ -432,7 +433,7 @@ chip8_exec(struct chip8_context *context)
 	uint8_t *stack = &mem[program->stack];
 	uint8_t *bitmap = &mem[program->bm];
 	uint8_t *v = &mem[program->v];
-	struct keypad keypad = { .time = {0}, .down = 0, .up = 0xFFFF, .held = false };
+	struct keypad keypad = { .time = {0}, .down = 0, .up = 0xFFFF, .held_key = UCHAR_MAX };
 	uint16_t last_pc;
 	uint16_t temp;
 
@@ -637,14 +638,15 @@ chip8_exec(struct chip8_context *context)
 					program->pc += 2;
 					break;
 				case 0x0A:
-					if (keypad.held) {
-						if (keypad.up & (1 << (v[opcode.vx] & 0xF))) {
-							keypad.held = false;
+					if (keypad.held_key != UCHAR_MAX) {
+						int64_t elapsed = time_now - keypad.time[keypad.held_key];
+						if (elapsed > INT64_C(1000000) * context->keypad_response_time) {
+							keypad.held_key = UCHAR_MAX;
 							program->pc += 2;
 						}
 					} else if (keypad.down) {
-						v[opcode.vx] = __builtin_ctz(keypad.down) & 0xF;
-						keypad.held = true;
+						keypad.held_key = __builtin_ctz(keypad.down) & 0xF;
+						v[opcode.vx] = keypad.held_key;
 					}
 					break;
 				case 0x15:
