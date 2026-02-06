@@ -131,7 +131,6 @@ os_beep(void)
 
 #define PIXEL_SIZE	3
 #define BITMAP_STRIDE	(64 * PIXEL_SIZE + 2)
-/* \033[H\033[92m ... rows ... \033[0m */
 static char BitmapDest[8 + 32 * BITMAP_STRIDE + 4];
 
 static void
