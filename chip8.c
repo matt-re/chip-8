@@ -382,7 +382,11 @@ chip8_dump(FILE *dst, struct chip8_program *program, bool full)
 		ptrdiff_t offset = cur - mem;
 		char str[18];
 		uint8_t *next = ((cur+1) < end) ? cur+1 : NULL;
-		bool is_opcode = (cur >= code_beg) && (cur < (mem + 0xE9F)) && next && !((uintptr_t)cur & 1) &&
+		/* some docs say opcodes start on even addresses but ROMs, such as INVADERS, start with a
+		 * jump to an odd address. need to fix this to parse the opcodes for jumps/call and support
+		 * odd addresses
+		 */
+		bool is_opcode = (cur >= code_beg) && (cur < (mem + 0xE9F)) && next && /*!((uintptr_t)cur & 1) &&*/
 			         opcode_to_string(str, sizeof str, opcode_from_bytes(*cur, *next));
 		if (is_opcode) {
 			if (packidx) {

@@ -30,7 +30,7 @@ Use the terminal version to print the disassembly of the loaded program.
 216: d125 drw  %1, %2, 0x05
 218: 1202 jp   0x202
 
-% ./chip8 -disasm ~/Downloads/c8games/INVADERS
+% ./chip8 -disasm ~/Downloads/c8games/PONG
 ...
 ```
 
