@@ -31,6 +31,16 @@ Use the terminal version to print the disassembly of the loaded program.
 218: 1202 jp   0x202
 
 % ./chip8 -disasm ~/Downloads/c8games/PONG
+200: 6a02 ld   %a, 0x02
+202: 6b0c ld   %b, 0x0c
+204: 6c3f ld   %c, 0x3f
+206: 6d0c ld   %d, 0x0c
+208: a2ea ld   %i, 0x2ea
+20a: dab6 drw  %a, %b, 0x06
+20c: dcd6 drw  %c, %d, 0x06
+20e: 6e00 ld   %e, 0x00
+210: 22d4 call 0x2d4
+212: 6603 ld   %6, 0x03
 ...
 ```
 
