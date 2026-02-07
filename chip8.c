@@ -216,10 +216,9 @@ os_read_keys(void)
 	uint16_t res = 0;
 	while (os_is_key_pressed()) {
 		uint8_t ch;
-		if (!os_read_key(&ch)) {
-			break;
+		if (os_read_key(&ch)) {
+			res |= (1 << ch) & 0xFFFF;
 		}
-		res |= (1 << ch) & 0xFFFF;
 	}
 	return res;
 }
