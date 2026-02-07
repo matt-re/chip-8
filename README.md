@@ -13,6 +13,8 @@ A CHIP-8 emulator in C.
 
 ### Disassembly
 Use the terminal version to print the disassembly of the loaded program.
+For running programs the signals SIGHUP and SIGQUIT can be used to perform
+a full memory dump, and full memory dump and exit respectively.
 ```
 % make terminal
 % ./chip8 -disasm
