@@ -170,7 +170,12 @@ os_is_key_pressed(void)
 	FD_ZERO(&fd);
 	FD_SET(STDIN_FILENO, &fd);
 	struct timeval tv = {0, 0};
-	return (select(STDIN_FILENO+1, &fd, NULL, NULL, &tv) > 0) && (FD_ISSET(STDIN_FILENO, &fd));
+	int ret;
+	while ((ret = select(STDIN_FILENO+1, &fd, NULL, NULL, &tv)) == -1 && errno == EINTR) {
+		FD_ZERO(&fd);
+		FD_SET(STDIN_FILENO, &fd);
+	}
+	return ret > 0 && FD_ISSET(STDIN_FILENO, &fd);
 }
 
 static bool
@@ -262,7 +267,8 @@ os_wait_frame(int64_t start)
 	int64_t frame_rate = 16666667;
 	if (elapsed < frame_rate) {
 		struct timespec sleep = { .tv_sec = 0, .tv_nsec = frame_rate - elapsed };
-		nanosleep(&sleep, NULL);
+		while (nanosleep(&sleep, &sleep) == -1 && errno == EINTR) {
+		}
 	}
 }
 
